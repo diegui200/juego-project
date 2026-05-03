@@ -438,11 +438,18 @@ function refreshClientList(){
 }
 
 // ═══════════════════════════════════════════════════════
-// SEÑALIZACIÓN — usamos peerjs-server público con peer ID
-// predefinido = "triviaracer-" + código. Así el código
-// corto mapea directamente a un peer ID válido sin necesitar
-// ningún servidor externo de lookup.
+// SEÑALIZACIÓN — Firebase Realtime Database
+// INSTRUCCIONES DE CONFIGURACIÓN (1 vez, 3 minutos):
+//
+// 1. Ve a https://console.firebase.google.com
+// 2. "Crear proyecto" → ponle cualquier nombre → continuar
+// 3. En el menú izquierdo: "Realtime Database" → "Crear base de datos"
+// 4. Elige cualquier región → "Iniciar en modo de prueba" → Listo
+// 5. Copia la URL que aparece (ej: https://mi-juego-xxxxx-default-rtdb.firebaseio.com)
+// 6. Pégala abajo en FIREBASE_URL
 // ═══════════════════════════════════════════════════════
+
+const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 
 function genCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -451,10 +458,32 @@ function genCode(){
   return c;
 }
 
-function codeToHostPeerId(code){
-  // Prefijo fijo + código para crear un peer ID único y reproducible
-  return 'triviaracer-host-' + code.toLowerCase();
+async function registerRoom(code, peerId){
+  if(!FIREBASE_URL){ console.warn('Firebase URL no configurada'); return; }
+  try {
+    await fetch(`${FIREBASE_URL}/rooms/${code}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId, ts: Date.now() })
+    });
+    window.addEventListener('beforeunload', ()=>{
+      navigator.sendBeacon(`${FIREBASE_URL}/rooms/${code}.json`, 'null');
+    });
+  } catch(e){ console.warn('registerRoom error', e); }
 }
+
+async function lookupRoom(code){
+  if(!FIREBASE_URL) return null;
+  try {
+    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000) return d.peerId;
+    return null;
+  } catch(e){ return null; }
+}
+
+const PEER_CFG = { debug: 0 };
 
 // ═══════════════════════════════════════════════════════
 // HOST FLOW
@@ -465,44 +494,20 @@ function showHostRoom(){
   document.getElementById('room-code').textContent = 'Conectando...';
 
   roomCode = genCode();
-  const hostPeerId = codeToHostPeerId(roomCode);
-
-  // Creamos el peer con ID predefinido = triviaracer-host-XXXXXX
-  peer = new Peer(hostPeerId, { debug: 0 });
-  peer.on('open', id => {
+  peer = new Peer(PEER_CFG);
+  peer.on('open', async id => {
     myId = id;
+    await registerRoom(roomCode, id);
     document.getElementById('room-code').textContent = roomCode;
-
-    myName = 'HOST';
-    myColorIdx = 0;
-    myColor = CAR_COLORS[0];
+    myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
     players[myId] = { id: myId, name: myName, color: myColor, colorIdx: myColorIdx };
     refreshHostList();
   });
-
-  peer.on('error', e => {
-    if(e.type === 'unavailable-id'){
-      // El código ya está en uso — genera otro
-      peer.destroy();
-      roomCode = genCode();
-      const newId = codeToHostPeerId(roomCode);
-      peer = new Peer(newId, { debug: 0 });
-      peer.on('open', id => {
-        myId = id;
-        document.getElementById('room-code').textContent = roomCode;
-        myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
-        players[myId] = { id: myId, name: myName, color: myColor, colorIdx: myColorIdx };
-        refreshHostList();
-      });
-      peer.on('connection', onHostConnection);
-      peer.on('error', e2 => showErr('Error PeerJS: ' + e2.type));
-    } else {
-      showErr('Error PeerJS: ' + e.type);
-    }
-  });
-
+  peer.on('error', e => showErr('Error PeerJS: ' + e.type));
   peer.on('connection', onHostConnection);
 }
+
+
 
 function onHostConnection(conn){
   const pid = conn.peer;
@@ -568,27 +573,45 @@ async function joinRoom(){
   const nameVal = document.getElementById('join-name-input').value.trim();
   if(code.length < 4){ showErr('Ingresa un código válido'); return; }
 
-  roomCode = code;
-  const hostPeerId = codeToHostPeerId(code);
-
   document.getElementById('lobby').style.display='none';
   document.getElementById('client-room').style.display='flex';
+  document.getElementById('client-status').textContent = 'Buscando sala...';
+
+  // Buscar el peer ID real del host en Firebase
+  let hostPeerId = null;
+  try {
+    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
+    if(r.ok){
+      const d = await r.json();
+      if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000){
+        hostPeerId = d.peerId;
+      }
+    }
+  } catch(e){}
+
+  if(!hostPeerId){
+    showErr('Sala no encontrada. Verifica el código.');
+    document.getElementById('client-room').style.display='none';
+    document.getElementById('lobby').style.display='flex';
+    return;
+  }
+
+  roomCode = code;
   document.getElementById('client-status').textContent = 'Conectando al host...';
 
-  peer = new Peer({ debug: 0 });
+  peer = new Peer(PEER_CFG);
   peer.on('open', id => {
     myId = id;
     hostConn = peer.connect(hostPeerId, { reliable: true });
-
     hostConn.on('open', ()=>{
       document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
     });
     hostConn.on('data', d => handleClientData(d));
     hostConn.on('close', ()=>showErr('Desconectado del host'));
-    hostConn.on('error', e=>showErr('Error de conexión'));
+    hostConn.on('error', ()=>showErr('Error de conexión con el host'));
   });
   peer.on('error', e => {
-    showErr('No se pudo conectar. Verifica el código. (' + e.type + ')');
+    showErr('Error al conectar. (' + e.type + ')');
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
   });
