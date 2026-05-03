@@ -497,6 +497,7 @@ const PEER_CFG = { debug: 0 };
 // HOST FLOW
 // ═══════════════════════════════════════════════════════
 function showHostRoom(){
+  isHost = true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
   document.getElementById('room-code').textContent = 'Conectando...';
