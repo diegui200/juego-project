@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer — Multijugador</title>
+<title>Trivia Racer v14 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -548,14 +548,14 @@ function handleHostData(pid, d){
   }
   if(d.type==='state-update'){
     remoteStates[pid] = d.state;
-    // Check finish
-    if(d.state.laps >= 3 && !d.state.finished){
-      d.state.finished = true;
-    }
+    if(d.state.laps >= 3 && !d.state.finished) d.state.finished = true;
     checkMultiFinish(pid, d.state);
+    // Relay este estado a TODOS los demás clientes (para que se vean entre sí)
+    Object.entries(clientConns).forEach(([otherPid, conn])=>{
+      if(otherPid === pid) return; // no enviar de vuelta al mismo
+      try { conn.send({ type:'relay-state', fromId: pid, state: d.state }); } catch(e){}
+    });
   }
-  // Relay state to all other clients
-  broadcastToClients({ type:'relay-state', fromId: pid, state: d.state });
 }
 
 function hostStartGame(){
@@ -676,13 +676,67 @@ function launchGame(track, pls){
   selectedTrack = track;
   players = pls;
 
-  if(players[myId]){ myColor = players[myId].color; myName = players[myId].name; }
-
   resize(); scaleCanvas();
-  buildTrack(); placeObstacles(); initCar();
+  buildTrack(); placeObstacles();
   particles = []; finishers = []; podiumShown = false; myFinished = false;
+
+  if(isHost){
+    // HOST = solo espectador: no inicializa carro, no controla
+    launchSpectator();
+  } else {
+    // CLIENTE = jugador completo
+    if(players[myId]){ myColor = players[myId].color; myName = players[myId].name; }
+    initCar();
+    gameRunning = true;
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+function launchSpectator(){
+  // El host ve todos los carros moviéndose pero no juega
+  // Ocultar controles e HUD de jugador, mostrar solo ranking
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('status-bar').style.display = 'none';
+
+  // Mostrar overlay de espectador
+  const ov = document.getElementById('overlay');
+  ov.style.display = 'none';
+
+  // Agrandar el ranking HUD para espectador
+  const rk = document.getElementById('ranking-hud');
+  rk.style.top = '10px';
+  rk.style.right = '10px';
+  rk.style.minWidth = '160px';
+  rk.style.fontSize = '13px';
+  rk.style.padding = '10px 14px';
+
+  // Añadir banner de espectador
+  const banner = document.createElement('div');
+  banner.id = 'spectator-banner';
+  banner.style.cssText = `position:absolute;top:10px;left:10px;background:rgba(10,10,20,0.85);
+    border:1.5px solid #f5a623;border-radius:8px;padding:6px 14px;
+    color:#f5a623;font-size:11px;font-family:'Courier New',monospace;letter-spacing:2px;z-index:15;`;
+  banner.textContent = '👁 MODO ESPECTADOR';
+  document.getElementById('canvas-wrap').appendChild(banner);
+
   gameRunning = true;
-  requestAnimationFrame(gameLoop);
+  requestAnimationFrame(spectatorLoop);
+}
+
+function spectatorLoop(){
+  if(!gameRunning) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawTrack();
+  drawObstacles();
+  // Dibujar todos los carros remotos
+  Object.entries(remoteStates).forEach(([pid, s])=>{
+    const p = players[pid] || { name:'?', color:'#888' };
+    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+  });
+  drawParticles();
+  updateRankingHUD();
+  requestAnimationFrame(spectatorLoop);
 }
 
 // ═══════════════════════════════════════════════════════
