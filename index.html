@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v14 — Multijugador</title>
+<title>Trivia Racer v15 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -425,8 +425,16 @@ function addPlayerRow(container, id, name, color, badge=''){
 function refreshHostList(){
   const list = document.getElementById('players-list');
   list.innerHTML = '<div id="players-list-title">JUGADORES EN SALA</div>';
+  // Mostrar etiqueta del host como espectador
+  const hostRow = document.createElement('div');
+  hostRow.className = 'player-row';
+  hostRow.innerHTML = `<div class="player-dot" style="background:#f5a623"></div>
+    <span class="player-name-txt" style="color:#f5a623">HOST</span>
+    <span class="player-badge" style="color:#f5a623">👁 espectador</span>`;
+  list.appendChild(hostRow);
+  // Luego los jugadores conectados
   Object.values(players).forEach(p=>{
-    addPlayerRow(list, p.id, p.name, p.color, p.id===myId?'(tú)':'');
+    addPlayerRow(list, p.id, p.name, p.color, '');
   });
 }
 function refreshClientList(){
@@ -500,7 +508,7 @@ function showHostRoom(){
     await registerRoom(roomCode, id);
     document.getElementById('room-code').textContent = roomCode;
     myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
-    players[myId] = { id: myId, name: myName, color: myColor, colorIdx: myColorIdx };
+    // El host NO se agrega a players[] — es solo espectador, no compite
     refreshHostList();
   });
   peer.on('error', e => showErr('Error PeerJS: ' + e.type));
@@ -519,7 +527,7 @@ function onHostConnection(conn){
     }
     clientConns[pid] = conn;
     const usedIdx = Object.values(players).map(p=>p.colorIdx);
-    let ci = 1; while(usedIdx.includes(ci)) ci++;
+    let ci = 0; while(usedIdx.includes(ci)) ci++;
     players[pid] = { id: pid, name: randomName(), color: CAR_COLORS[ci%CAR_COLORS.length], colorIdx: ci };
     conn.send({ type:'welcome', playerId: pid, name: players[pid].name,
                 color: players[pid].color, colorIdx: ci, players: players });
@@ -675,6 +683,8 @@ function launchGame(track, pls){
 
   selectedTrack = track;
   players = pls;
+  // Asegurarse de que el host no esté en la lista de jugadores
+  if(isHost && players[myId]) delete players[myId];
 
   resize(); scaleCanvas();
   buildTrack(); placeObstacles();
@@ -759,15 +769,13 @@ function checkMultiFinish(pid, state){
 // ═══════════════════════════════════════════════════════
 let stateThrottle = 0;
 function sendMyState(){
+  // El host es espectador, no tiene carro → no envía estado de carro
+  if(isHost) return;
   const now = Date.now();
   if(now - stateThrottle < 50) return; // ~20fps
   stateThrottle = now;
   const state = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished, fuel: car.fuel };
-  if(isHost){
-    remoteStates[myId] = state;
-    broadcastToClients({ type:'host-state', fromId: myId, state });
-    checkMultiFinish(myId, state);
-  } else if(hostConn && hostConn.open){
+  if(hostConn && hostConn.open){
     hostConn.send({ type:'state-update', state });
   }
 }
@@ -830,9 +838,11 @@ function backToLobby(){
 // RANKING HUD
 // ═══════════════════════════════════════════════════════
 function updateRankingHUD(){
-  // Combinar mi estado con los remotos
+  // Si es host espectador, solo usar estados remotos (no tiene carro propio)
   const allStates = { ...remoteStates };
-  allStates[myId] = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished };
+  if(!isHost){
+    allStates[myId] = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished };
+  }
 
   // Calcular progreso: laps * 1000 + avance en pista (índice más cercano)
   const ranked = Object.entries(allStates).map(([id, s])=>{
@@ -846,7 +856,8 @@ function updateRankingHUD(){
   rows.innerHTML = '';
   ranked.slice(0, 8).forEach((p, i)=>{
     const row = document.createElement('div');
-    row.className = 'rk-row' + (p.id===myId?' me':'') + (p.finished?' finished':'');
+    // El host no se marca a sí mismo como "me" en el ranking
+    row.className = 'rk-row' + (!isHost && p.id===myId?' me':'') + (p.finished?' finished':'');
     row.innerHTML = `<span class="rk-pos">${i+1}</span>
       <div class="rk-dot" style="background:${p.color}"></div>
       <span class="rk-name">${p.name}</span>
@@ -854,9 +865,11 @@ function updateRankingHUD(){
     rows.appendChild(row);
   });
 
-  // Update my position badge
-  const myRank = ranked.findIndex(p=>p.id===myId);
-  document.getElementById('my-pos').textContent = myRank>=0 ? (myRank+1)+'°' : '-';
+  // Update my position badge (solo aplica a jugadores, no al host)
+  if(!isHost){
+    const myRank = ranked.findIndex(p=>p.id===myId);
+    document.getElementById('my-pos').textContent = myRank>=0 ? (myRank+1)+'°' : '-';
+  }
 }
 
 // ═══════════════════════════════════════════════════════
