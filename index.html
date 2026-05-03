@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v16 — Multijugador</title>
+<title>Trivia Racer v17 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; font-family: 'Courier New', monospace; overflow-x: hidden; }
+html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
 
 /* ── WRAPPER ── */
-#game-outer { width: 100%; max-width: 840px; display: flex; flex-direction: column; background: #1a1a2e; border-radius: 12px; overflow: hidden; }
-#game-wrap { display: flex; flex-direction: column; }
+#game-outer { width: 100%; max-width: 840px; height: 100dvh; display: flex; flex-direction: column; background: #1a1a2e; overflow: hidden; }
+#game-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 /* ── LOBBY ── */
 #lobby {
@@ -138,12 +138,13 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 /* ── HUD ── */
 #hud {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 6px 12px; background: #0f0f1a; border-bottom: 2px solid #e94560; gap: 6px;
+  padding: 4px 10px; background: #0f0f1a; border-bottom: 2px solid #e94560; gap: 6px;
+  flex-shrink: 0;
 }
 .hud-item { display: flex; flex-direction: column; align-items: center; }
-.hud-label { font-size: 9px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
-.hud-val { font-size: 16px; font-weight: bold; color: #fff; }
-#fuel-bar-bg { flex: 1; height: 11px; background: #333; border-radius: 6px; overflow: hidden; }
+.hud-label { font-size: 8px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+.hud-val { font-size: 14px; font-weight: bold; color: #fff; }
+#fuel-bar-bg { flex: 1; height: 9px; background: #333; border-radius: 6px; overflow: hidden; }
 #fuel-bar { height: 100%; width: 100%; border-radius: 6px; transition: width 0.15s; }
 
 /* ── RANKING HUD ── */
@@ -164,7 +165,7 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 
 /* ── CANVAS ── */
 #canvas-wrap { position: relative; width: 820px; height: 430px; }
-#canvas-scale-wrap { width: 100%; overflow: hidden; display: flex; justify-content: center; background: #1a1a2e; flex-shrink: 1; }
+#canvas-scale-wrap { width: 100%; overflow: hidden; display: flex; justify-content: center; align-items: flex-start; background: #1a1a2e; flex: 1; min-height: 0; }
 canvas { display: block; width: 820px; height: 430px; }
 
 /* ── OVERLAYS ── */
@@ -182,7 +183,7 @@ canvas { display: block; width: 820px; height: 430px; }
 .opt-btn.correct { border-color: #00c896; color: #00c896; background: #00c89620; }
 .opt-btn.wrong { border-color: #e94560; color: #e94560; background: #e9456020; }
 #trivia-result { font-size: 13px; text-align: center; min-height: 20px; font-weight: bold; }
-#status-bar { background: #0f0f1a; padding: 3px 14px; min-height: 18px; display: flex; align-items: center; justify-content: center; }
+#status-bar { background: #0f0f1a; padding: 2px 14px; min-height: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 #status-msg { color: #f5a623; font-size: 11px; }
 #pits-panel { position: absolute; inset: 0; background: rgba(8,8,18,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 35; }
 #pits-panel h3 { color: #f5a623; font-size: 20px; letter-spacing: 3px; }
@@ -191,7 +192,7 @@ canvas { display: block; width: 820px; height: 430px; }
 #pits-bar { height: 100%; width: 0%; background: #f5a623; border-radius: 5px; transition: width 0.1s; }
 
 /* ── CONTROLES ── */
-#controls { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px; flex-shrink: 0; }
+#controls { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px; flex-shrink: 0; }
 #dir-wrap { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
 .dir-btn {
   width: 64px; height: 64px; border-radius: 14px; background: #1e1e30;
@@ -698,6 +699,7 @@ function launchGame(track, pls){
   if(isHost && players[myId]) delete players[myId];
 
   resize(); scaleCanvas();
+  setTimeout(scaleCanvas, 50);
   buildTrack(); placeObstacles();
   particles = []; finishers = []; podiumShown = false; myFinished = false;
 
@@ -902,18 +904,17 @@ function resize(){ canvas.width = CANVAS_W; canvas.height = CANVAS_H; }
 resize();
 
 function scaleCanvas(){
-  // HUD ~42px, status-bar ~18px, controls ~76px (mobile ~68px) = ~136px reserved
-  const reserved = 140;
-  const maxH = window.innerHeight - reserved;
-  const scaleW = window.innerWidth / 820;
-  const scaleH = maxH / 430;
-  const scale = Math.min(scaleW, scaleH, 1);
   const sw = document.getElementById('canvas-scale-wrap');
+  const availW = sw.offsetWidth || window.innerWidth;
+  const availH = sw.offsetHeight || (window.innerHeight - 140);
+  const scaleW = availW / 820;
+  const scaleH = availH / 430;
+  const scale = Math.min(scaleW, scaleH, 1);
   sw.style.height = Math.round(430*scale)+'px';
   wrap.style.transform = 'scale('+scale+')';
   wrap.style.transformOrigin = 'top left';
 }
-scaleCanvas();
+requestAnimationFrame(()=>{ scaleCanvas(); });
 window.addEventListener('resize', scaleCanvas);
 
 let trackPath = [], trackWidth = 34;
