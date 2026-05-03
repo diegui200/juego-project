@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v17 — Multijugador</title>
+<title>Trivia Racer v18 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -747,8 +747,10 @@ function launchSpectator(){
   requestAnimationFrame(spectatorLoop);
 }
 
-function spectatorLoop(){
+let _lastSpectatorTime = 0;
+function spectatorLoop(ts){
   if(!gameRunning) return;
+  _lastSpectatorTime = ts;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   drawTrack();
   drawObstacles();
@@ -1166,6 +1168,7 @@ function initCar(){
   car.stunEnd=0; car.spinVel=0;
   lapCrossed=false; triviaActive=false; pitsActive=false; qUsed=[];
   wrongAnswerCooldownEnd=0; myFinished=false;
+  _lastFrameTime=0;
 }
 
 function drawCar(x,y,angle,color,alpha,showFuel){
@@ -1197,28 +1200,28 @@ function drawRemoteCar(x, y, angle, color, name){
   ctx.restore();
 }
 
-function updateCar(){
+function updateCar(dt=1){
   if(triviaActive||pitsActive) return;
   let now=Date.now();
   let stunned=now<car.stunEnd;
-  if(stunned){ car.angle+=car.spinVel; car.spinVel*=0.92; car.speed*=0.85; return; }
+  if(stunned){ car.angle+=car.spinVel*dt; car.spinVel*=Math.pow(0.92,dt); car.speed*=Math.pow(0.85,dt); return; }
   const TURN=0.052,ACCEL=0.13,FRIC=0.96,MAX=5.2;
-  if(keys.left) car.angle-=TURN;
-  if(keys.right) car.angle+=TURN;
-  if(keys.up&&car.fuel>0) car.speed=Math.min(car.speed+ACCEL,MAX);
-  car.speed*=FRIC;
+  if(keys.left) car.angle-=TURN*dt;
+  if(keys.right) car.angle+=TURN*dt;
+  if(keys.up&&car.fuel>0) car.speed=Math.min(car.speed+ACCEL*dt,MAX);
+  car.speed*=Math.pow(FRIC,dt);
   if(Math.abs(car.speed)<0.05) car.speed=0;
-  let nx=car.x+Math.cos(car.angle)*car.speed;
-  let ny=car.y+Math.sin(car.angle)*car.speed;
+  let nx=car.x+Math.cos(car.angle)*car.speed*dt;
+  let ny=car.y+Math.sin(car.angle)*car.speed*dt;
   let cp=closestPointOnTrack(nx,ny);
   if(cp.dist<trackWidth*0.92){car.x=nx;car.y=ny;}
   else{
     let tp=trackPath[cp.idx];
     let pushX=tp[0]-car.x,pushY=tp[1]-car.y;
     let len=Math.sqrt(pushX*pushX+pushY*pushY)||1;
-    car.x+=pushX/len*1.5; car.y+=pushY/len*1.5; car.speed*=0.7;
+    car.x+=pushX/len*1.5*dt; car.y+=pushY/len*1.5*dt; car.speed*=0.7;
   }
-  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.055);
+  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.055*dt);
   let margin=14;
   if(car.y<margin){car.y=margin; if(car.speed>0)car.speed*=0.5;}
   if(car.y>canvas.height-margin){car.y=canvas.height-margin; if(car.speed>0)car.speed*=0.5;}
@@ -1360,8 +1363,12 @@ function answerQ(chosen,correct,btn){
 function closeTrivia(){ document.getElementById('trivia-panel').style.display='none'; triviaActive=false; }
 
 // ─── GAME LOOP ────────────────────────────────────────
-function gameLoop(){
+let _lastFrameTime = 0;
+function gameLoop(ts){
   if(!gameRunning) return;
+  const dt = _lastFrameTime ? Math.min((ts - _lastFrameTime) / (1000/60), 3) : 1;
+  _lastFrameTime = ts;
+
   ctx.clearRect(0,0,canvas.width,canvas.height);
   drawTrack();
   drawObstacles();
@@ -1375,7 +1382,7 @@ function gameLoop(){
 
   drawParticles();
   drawCar(car.x, car.y, car.angle, myColor, 1, true);
-  updateCar();
+  updateCar(dt);
   sendMyState();
   updateHUD();
   updateRankingHUD();
