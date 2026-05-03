@@ -1,0 +1,739 @@
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  #game-wrap { background: #1a1a2e; min-height: 600px; padding: 0; position: relative; overflow: hidden; border-radius: 12px; }
+  #hud { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: #0f0f1a; border-bottom: 2px solid #e94560; flex-wrap: wrap; gap: 6px; }
+  .hud-item { display: flex; flex-direction: column; align-items: center; }
+  .hud-label { font-size: 9px; color: #888; letter-spacing: 2px; text-transform: uppercase; font-family: 'Courier New', monospace; }
+  .hud-val { font-size: 17px; font-weight: bold; color: #fff; font-family: 'Courier New', monospace; }
+  #fuel-bar-bg { flex: 1; height: 11px; background: #333; border-radius: 6px; overflow: hidden; }
+  #fuel-bar { height: 100%; width: 100%; border-radius: 6px; transition: width 0.15s; }
+  #canvas-wrap { position: relative; width: 100%; height: 430px; }
+  canvas { display: block; }
+  #overlay { position: absolute; inset: 0; background: rgba(10,10,20,0.93); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 20; }
+  #overlay h2 { color: #e94560; font-size: 24px; letter-spacing: 3px; font-family: 'Courier New', monospace; }
+  #overlay p { color: #aaa; font-size: 12px; text-align: center; max-width: 280px; font-family: 'Courier New', monospace; line-height: 1.6; }
+  .btn { background: #e94560; color: #fff; border: none; padding: 10px 26px; font-size: 13px; font-weight: bold; border-radius: 6px; cursor: pointer; letter-spacing: 1px; font-family: 'Courier New', monospace; }
+  .btn:hover { background: #c73450; }
+  #trivia-panel { position: absolute; inset: 0; background: rgba(10,10,20,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 30; padding: 20px; }
+  #trivia-panel h3 { color: #f5a623; font-size: 12px; letter-spacing: 2px; font-family: 'Courier New', monospace; }
+  #trivia-question { color: #fff; font-size: 14px; text-align: center; max-width: 310px; line-height: 1.5; font-family: 'Courier New', monospace; }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; max-width: 330px; }
+  .opt-btn { background: #1a1a2e; border: 1.5px solid #444; color: #ddd; padding: 10px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; text-align: center; font-family: 'Courier New', monospace; }
+  .opt-btn:hover { border-color: #e94560; color: #fff; }
+  .opt-btn.correct { border-color: #00c896; color: #00c896; background: #00c89620; }
+  .opt-btn.wrong { border-color: #e94560; color: #e94560; background: #e9456020; }
+  #trivia-result { font-size: 13px; text-align: center; min-height: 20px; font-family: 'Courier New', monospace; font-weight: bold; }
+  #controls { display: flex; justify-content: center; gap: 8px; padding: 8px; background: #0f0f1a; border-top: 1px solid #222; }
+  .ctrl-btn { background: #222; border: 1.5px solid #444; color: #fff; padding: 9px 14px; font-size: 18px; border-radius: 8px; cursor: pointer; user-select: none; min-width: 48px; text-align: center; -webkit-user-select: none; }
+  .ctrl-btn:active { background: #e94560; border-color: #e94560; }
+  #fuel-btn { background: #f5a623; border: none; color: #000; padding: 9px 16px; font-size: 11px; font-weight: bold; border-radius: 8px; cursor: pointer; font-family: 'Courier New', monospace; letter-spacing: 1px; position: relative; overflow: hidden; min-width: 120px; }
+  #fuel-btn:disabled { background: #555; color: #999; cursor: not-allowed; }
+  #fuel-btn.cooling { background: #333; color: #f5a623; border: 1.5px solid #f5a623; cursor: not-allowed; }
+  #fuel-btn .cooldown-fill { position: absolute; left: 0; top: 0; height: 100%; background: #f5a62340; transition: width 0.1s linear; border-radius: 8px; }
+  #fuel-btn .btn-label { position: relative; z-index: 1; }
+  #status-bar { background: #0f0f1a; padding: 3px 14px; min-height: 20px; display: flex; align-items: center; justify-content: center; }
+  #status-msg { color: #f5a623; font-size: 11px; font-family: 'Courier New', monospace; }
+  #pits-panel { position: absolute; inset: 0; background: rgba(8,8,18,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 35; }
+  #pits-panel h3 { color: #f5a623; font-size: 20px; letter-spacing: 3px; font-family: 'Courier New', monospace; }
+  #pits-panel p { color: #aaa; font-size: 12px; font-family: 'Courier New', monospace; text-align: center; }
+  #pits-bar-bg { width: 220px; height: 10px; background: #333; border-radius: 5px; overflow: hidden; }
+  #pits-bar { height: 100%; width: 0%; background: #f5a623; border-radius: 5px; transition: width 0.1s; }
+</style>
+
+<div id="game-wrap">
+  <div id="hud">
+    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/3</span></div>
+    <div class="hud-item"><span class="hud-label">Vel</span><span class="hud-val" id="spd">0</span></div>
+    <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:100px;">
+      <span style="color:#f5a623;font-size:13px;font-family:monospace;">⛽</span>
+      <div id="fuel-bar-bg" style="flex:1;"><div id="fuel-bar"></div></div>
+      <span class="hud-val" id="fuel-num" style="font-size:13px;">100</span>
+    </div>
+    <div class="hud-item"><span class="hud-label">Pts</span><span class="hud-val" id="score">0</span></div>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="c"></canvas>
+
+    <div id="overlay">
+      <h2>⚡ TRIVIA RACER</h2>
+      <p>Completa 3 vueltas. Esquiva las calaveras. Cuando el combustible baje al 30%, presiona ⛽ para recargar. ¡Si te equivocas, esperas 10 segundos!</p>
+      <p style="color:#aaa;font-size:11px;font-family:monospace;margin-top:4px;">Elige una pista:</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+        <button class="btn" id="track-btn-1" onclick="selectTrack(1)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 1<br><span style="font-size:9px;color:#888;">HAIRPIN C</span></button>
+        <button class="btn" id="track-btn-2" onclick="selectTrack(2)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 2<br><span style="font-size:9px;color:#888;">KARTING</span></button>
+        <button class="btn" id="track-btn-3" onclick="selectTrack(3)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 3<br><span style="font-size:9px;color:#888;">ÓVALO</span></button>
+      </div>
+      <button class="btn" id="start-btn" onclick="startGame()" style="margin-top:4px;">ARRANCAR</button>
+      <p style="color:#555;font-size:10px;">PC: flechas / WASD · ESPACIO = combustible</p>
+    </div>
+
+    <div id="trivia-panel">
+      <h3>⛽ RECARGA DE COMBUSTIBLE</h3>
+      <div id="trivia-question"></div>
+      <div class="opts" id="opts-wrap"></div>
+      <div id="trivia-result"></div>
+    </div>
+
+    <div id="pits-panel">
+      <h3>🔧 PITS</h3>
+      <p id="pits-msg">El equipo está arreglando el carro...</p>
+      <div id="pits-bar-bg"><div id="pits-bar"></div></div>
+      <p id="pits-countdown" style="color:#f5a623;font-size:22px;font-family:'Courier New',monospace;font-weight:bold;"></p>
+    </div>
+  </div>
+
+  <div id="status-bar"><span id="status-msg"></span></div>
+
+  <div id="controls">
+    <button class="ctrl-btn" ontouchstart="keys.left=true;return false" ontouchend="keys.left=false;return false">◀</button>
+    <button class="ctrl-btn" ontouchstart="keys.up=true;return false" ontouchend="keys.up=false;return false">▲</button>
+    <button class="ctrl-btn" ontouchstart="keys.right=true;return false" ontouchend="keys.right=false;return false">▶</button>
+    <button id="fuel-btn" onclick="requestFuel()"><div class="cooldown-fill" id="cd-fill"></div><span class="btn-label" id="fuel-btn-label">⛽ COMBUSTIBLE</span></button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+
+function resize() { canvas.width = wrap.clientWidth || 680; canvas.height = 430; }
+resize();
+
+let trackPath = [], trackWidth = 34; // más angosta que antes (era 46)
+let selectedTrack = 1;
+
+function selectTrack(n){
+  selectedTrack=n;
+  [1,2,3].forEach(i=>{
+    let b=document.getElementById('track-btn-'+i);
+    if(b) b.style.border=i===n?'2px solid #e94560':'2px solid #444';
+  });
+}
+
+// ─── PISTA 1: HAIRPIN EN C ───────────────────────────────────────────────────
+function getWaypoints1(W,H){
+  return [
+    [0.08,0.11],[0.22,0.11],[0.38,0.11],[0.54,0.11],[0.70,0.11],
+    [0.84,0.11],[0.91,0.17],[0.91,0.26],
+    [0.91,0.38],[0.91,0.52],[0.91,0.64],
+    [0.91,0.74],[0.87,0.82],[0.78,0.86],[0.68,0.86],[0.60,0.82],[0.57,0.74],
+    [0.57,0.62],[0.57,0.50],[0.57,0.38],
+    [0.57,0.26],[0.53,0.18],[0.46,0.14],[0.38,0.17],[0.35,0.26],
+    [0.35,0.38],[0.35,0.50],[0.35,0.62],[0.35,0.74],
+    [0.35,0.82],[0.29,0.88],[0.20,0.90],[0.12,0.87],[0.08,0.80],[0.08,0.70],
+    [0.08,0.58],[0.08,0.44],[0.08,0.30],[0.08,0.11],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+
+// ─── PISTA 2: KARTING S-CURVES ──────────────────────────────────────────────
+function getWaypoints2(W,H){
+  return [
+    [0.72,0.08],[0.58,0.08],[0.46,0.08],
+    [0.36,0.08],[0.28,0.10],[0.22,0.18],[0.22,0.28],
+    [0.24,0.36],[0.32,0.42],[0.38,0.50],[0.32,0.58],
+    [0.24,0.64],[0.18,0.72],[0.22,0.82],[0.30,0.88],
+    [0.42,0.90],[0.55,0.90],[0.68,0.88],
+    [0.78,0.84],[0.84,0.76],[0.82,0.66],
+    [0.76,0.58],[0.68,0.52],[0.74,0.44],[0.82,0.38],
+    [0.88,0.30],[0.90,0.22],[0.86,0.14],[0.78,0.08],[0.72,0.08],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+
+// ─── PISTA 3: ÓVALO SIMPLE ───────────────────────────────────────────────────
+function getWaypoints3(W,H){
+  return [
+    [0.20,0.12],[0.38,0.12],[0.56,0.12],[0.74,0.12],
+    [0.86,0.12],[0.93,0.20],[0.93,0.30],[0.93,0.42],
+    [0.93,0.54],[0.93,0.66],[0.93,0.76],
+    [0.86,0.86],[0.74,0.90],[0.58,0.90],[0.42,0.90],
+    [0.26,0.90],[0.14,0.86],
+    [0.07,0.76],[0.07,0.66],[0.07,0.54],
+    [0.07,0.42],[0.07,0.30],[0.07,0.20],
+    [0.14,0.12],[0.20,0.12],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+
+function getWaypoints(W,H){
+  if(selectedTrack===1) return getWaypoints1(W,H);
+  if(selectedTrack===2) return getWaypoints2(W,H);
+  return getWaypoints3(W,H);
+}
+
+function catmullRom(pts, steps) {
+  let result=[], n=pts.length;
+  for (let i=0;i<n-1;i++) {
+    let p0=pts[Math.max(i-1,0)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(i+2,n-1)];
+    for (let s=0;s<steps;s++) {
+      let t=s/steps,t2=t*t,t3=t2*t;
+      let x=0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+      let y=0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+      result.push([x,y]);
+    }
+  }
+  return result;
+}
+
+function buildTrack() {
+  let W=canvas.width,H=canvas.height;
+  trackPath=catmullRom(getWaypoints(W,H),12);
+}
+
+function closestPointOnTrack(x,y) {
+  let minD=Infinity,minI=0;
+  for (let i=0;i<trackPath.length;i++) {
+    let dx=x-trackPath[i][0],dy=y-trackPath[i][1],d=dx*dx+dy*dy;
+    if(d<minD){minD=d;minI=i;}
+  }
+  return {idx:minI,dist:Math.sqrt(minD)};
+}
+function isOnTrack(x,y){return closestPointOnTrack(x,y).dist<trackWidth*0.92;}
+function getTrackDir(i){
+  let n=trackPath.length,a=trackPath[(i-1+n)%n],b=trackPath[(i+1)%n];
+  let dx=b[0]-a[0],dy=b[1]-a[1],len=Math.sqrt(dx*dx+dy*dy)||1;
+  return [dx/len,dy/len];
+}
+
+// ─── DIBUJO DE PISTA ───────────────────────────────────────────────────────────
+function drawTrack() {
+  let W=canvas.width,H=canvas.height;
+
+  // Fondo césped verde oscuro
+  ctx.fillStyle='#2d5a27';
+  ctx.fillRect(0,0,W,H);
+
+  // Textura de césped (puntos aleatorios fijos — usamos seed implícita por posición)
+  ctx.fillStyle='#336b2d';
+  for(let gx=0;gx<W;gx+=14){
+    for(let gy=0;gy<H;gy+=14){
+      let jx=((gx*7+gy*3)%11)-5, jy=((gy*5+gx*11)%9)-4;
+      ctx.fillRect(gx+jx,gy+jy,2,3);
+    }
+  }
+
+  // Sombra de pista
+  ctx.save();
+  ctx.shadowColor='rgba(0,0,0,0.7)'; ctx.shadowBlur=14; ctx.shadowOffsetY=3;
+  ctx.lineWidth=trackWidth*2+14; ctx.strokeStyle='rgba(0,0,0,0.4)';
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  _strokePath(); ctx.restore();
+
+  // Borde exterior rojo+blanco (alternado tipo bordillo)
+  _drawCurbing(trackWidth*2+10, 5);
+
+  // Base asfalto (gris oscuro)
+  ctx.save();
+  ctx.lineWidth=trackWidth*2; ctx.strokeStyle='#3a3a4a';
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  _strokePath(); ctx.restore();
+
+  // Línea de borde interior (blanca fina)
+  ctx.save();
+  ctx.lineWidth=trackWidth*2-6; ctx.strokeStyle='#505068';
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  _strokePath(); ctx.restore();
+
+  // Asfalto central
+  ctx.save();
+  ctx.lineWidth=trackWidth*2-10; ctx.strokeStyle='#3a3a52';
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  _strokePath(); ctx.restore();
+
+  drawCenterDashes();
+  drawDirectionArrows();
+  drawFinishLine();
+}
+
+function _strokePath(){
+  ctx.beginPath();
+  ctx.moveTo(trackPath[0][0],trackPath[0][1]);
+  for(let i=1;i<trackPath.length;i++) ctx.lineTo(trackPath[i][0],trackPath[i][1]);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+// Bordillos rojo-blanco a los lados de la pista
+function _drawCurbing(totalW, stripeLen){
+  let n=trackPath.length;
+  for(let i=0;i<n;i+=stripeLen){
+    let end=Math.min(i+stripeLen, n-1);
+    let color=(Math.floor(i/stripeLen)%2===0)?'#dd2222':'#ffffff';
+    let p=trackPath[i], dir=getTrackDir(i);
+    let nx=-dir[1], ny=dir[0];
+    let hw=totalW/2;
+
+    // bordillo externo
+    ctx.save();
+    ctx.strokeStyle=color; ctx.lineWidth=5; ctx.lineCap='butt';
+    ctx.beginPath();
+    for(let j=i;j<=end&&j<n;j++){
+      let d2=getTrackDir(j), nx2=-d2[1], ny2=d2[0];
+      let px=trackPath[j][0]+nx2*hw, py=trackPath[j][1]+ny2*hw;
+      if(j===i) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+    // bordillo interno
+    ctx.beginPath();
+    for(let j=i;j<=end&&j<n;j++){
+      let d2=getTrackDir(j), nx2=-d2[1], ny2=d2[0];
+      let px=trackPath[j][0]-nx2*hw, py=trackPath[j][1]-ny2*hw;
+      if(j===i) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Líneas discontinuas centrales
+function drawCenterDashes(){
+  let n=trackPath.length, segLen=18, gap=14;
+  for(let i=0;i<n;i+=segLen+gap){
+    let end=Math.min(i+segLen,n);
+    ctx.save();
+    ctx.strokeStyle='#ffffff55'; ctx.lineWidth=1.5; ctx.lineCap='round';
+    ctx.beginPath();
+    for(let j=i;j<end&&j<n;j++){
+      if(j===i) ctx.moveTo(trackPath[j][0],trackPath[j][1]);
+      else ctx.lineTo(trackPath[j][0],trackPath[j][1]);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+// ─── FLECHAS DE DIRECCIÓN ──────────────────────────────────────────────────────
+function drawDirectionArrows(){
+  let n=trackPath.length;
+  // Colocar flechas cada ~N puntos a lo largo de la pista
+  let spacing=Math.max(20, Math.floor(n/16));
+  for(let i=spacing; i<n; i+=spacing){
+    let dir=getTrackDir(i);
+    let p=trackPath[i];
+    drawArrow(p[0], p[1], dir[0], dir[1]);
+  }
+}
+
+function drawArrow(x, y, dx, dy){
+  let size=9;
+  let angle=Math.atan2(dy,dx);
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(angle);
+  ctx.globalAlpha=0.75;
+  // cuerpo flecha
+  ctx.beginPath();
+  ctx.moveTo(-size, -size*0.4);
+  ctx.lineTo(0,    -size*0.4);
+  ctx.lineTo(0,    -size*0.8);
+  ctx.lineTo(size,  0);
+  ctx.lineTo(0,     size*0.8);
+  ctx.lineTo(0,     size*0.4);
+  ctx.lineTo(-size,  size*0.4);
+  ctx.closePath();
+  ctx.fillStyle='#ffffffcc';
+  ctx.shadowColor='#000'; ctx.shadowBlur=4;
+  ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+
+// ─── LÍNEA DE META ─────────────────────────────────────────────────────────────
+function drawFinishLine(){
+  let si=4, p=trackPath[si], dir=getTrackDir(si);
+  let nx=-dir[1],ny=dir[0],hw=trackWidth,cols=8;
+  ctx.save();
+  for(let r=0;r<3;r++) for(let c=0;c<cols;c++){
+    let t=(c/cols)*2-1;
+    let bx=p[0]+nx*t*hw+dir[0]*r*6-dir[0]*9;
+    let by=p[1]+ny*t*hw+dir[1]*r*6-dir[1]*9;
+    ctx.fillStyle=(r+c)%2===0?'#fff':'#111';
+    ctx.fillRect(bx-4,by-3,(hw*2/cols)-1,5);
+  }
+  ctx.restore();
+}
+
+// ─── OBSTÁCULOS ────────────────────────────────────────────────────────────────
+// Posiciones estratégicas por pista: cada valor es una fracción 0-1 del trackPath
+// colocados en curvas cerradas / estrecheces, nunca juntos
+// offset lateral en [-1,1] fracción del trackWidth
+const OBSTACLE_POSITIONS = {
+  1: [ // PISTA 1 HAIRPIN C
+    [0.08,  0.45],
+    [0.14, -0.50],
+    [0.22,  0.45],
+    [0.32, -0.50],
+    [0.38,  0.55],
+    [0.46, -0.45],
+    [0.55,  0.50],
+    [0.64, -0.45],
+    [0.74,  0.55],
+    [0.88, -0.45],
+  ],
+  2: [ // PISTA 2 KARTING S-CURVES
+    [0.08,  0.45],
+    [0.17, -0.50],
+    [0.27,  0.45],
+    [0.36, -0.45],
+    [0.47,  0.50],
+    [0.57, -0.40],
+    [0.66,  0.45],
+    [0.76, -0.50],
+    [0.88,  0.45],
+  ],
+  3: [ // PISTA 3 ÓVALO
+    [0.10,  0.50],
+    [0.25, -0.50],
+    [0.40,  0.50],
+    [0.55, -0.45],
+    [0.65,  0.50],
+    [0.75, -0.50],
+    [0.85,  0.45],
+    [0.92, -0.50],
+  ]
+};
+
+let obstacles=[];
+function placeObstacles(){
+  obstacles=[];
+  let n=trackPath.length;
+  let positions=OBSTACLE_POSITIONS[selectedTrack]||OBSTACLE_POSITIONS[1];
+  positions.forEach(([frac, lateralFrac])=>{
+    let idx=Math.floor(frac*n);
+    idx=Math.max(0,Math.min(n-1,idx));
+    let dir=getTrackDir(idx), nx=-dir[1], ny=dir[0];
+    let off=lateralFrac*trackWidth*0.72; // mantiene el obstáculo claramente en pista
+    obstacles.push({
+      x: trackPath[idx][0]+nx*off,
+      y: trackPath[idx][1]+ny*off,
+      r: 12, cooldown: 0
+    });
+  });
+}
+
+function drawSkull(x,y,r,alpha){
+  ctx.save(); ctx.globalAlpha=alpha||1; ctx.translate(x,y);
+  ctx.shadowColor='#ff0000'; ctx.shadowBlur=14;
+  ctx.fillStyle='#cc0000';
+  ctx.beginPath(); ctx.arc(0,-r*0.12,r*0.68,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(-r*0.52,-r*0.12,r*1.04,r*0.55);
+  ctx.fillStyle='#991111';
+  ctx.beginPath(); ctx.arc(0,r*0.33,r*0.4,0,Math.PI); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#880000';
+  ctx.beginPath(); ctx.moveTo(-r*0.1,r*0.17); ctx.lineTo(r*0.1,r*0.17); ctx.lineTo(0,r*0.04); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#fff';
+  [-r*0.26,0,r*0.26].forEach(tx=>{ctx.fillRect(tx-r*0.09,r*0.26,r*0.16,r*0.2);});
+  ctx.restore();
+}
+
+function drawObstacles(){
+  let now=Date.now();
+  obstacles.forEach(o=>{
+    let a=now<o.cooldown?0.25:1;
+    drawSkull(o.x,o.y,o.r,a);
+  });
+}
+
+// ─── PARTÍCULAS ────────────────────────────────────────────────────────────────
+let particles=[];
+function spawnHit(x,y){
+  for(let i=0;i<14;i++)
+    particles.push({x,y,r:3+Math.random()*4,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,color:'#ff3333',life:28});
+}
+function spawnStars(x,y){
+  for(let i=0;i<10;i++)
+    particles.push({x,y,r:2+Math.random()*3,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,color:'#ffe000',life:32});
+}
+function drawParticles(){
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life/32;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    p.x+=p.vx; p.y+=p.vy; p.life--;
+  });
+  ctx.globalAlpha=1;
+}
+
+// ─── CARRO ─────────────────────────────────────────────────────────────────────
+let car={x:0,y:0,angle:0,speed:0,fuel:100,laps:0,score:0,stunEnd:0,spinVel:0};
+let keys={up:false,left:false,right:false};
+let gameRunning=false,triviaActive=false,pitsActive=false;
+let lapCrossed=false, qUsed=[];
+let wrongAnswerCooldownEnd=0;
+
+function initCar(){
+  let si=4;
+  car.x=trackPath[si][0]; car.y=trackPath[si][1];
+  let dir=getTrackDir(si);
+  car.angle=Math.atan2(dir[1],dir[0]);
+  car.speed=0; car.fuel=100; car.laps=0; car.score=0;
+  car.stunEnd=0; car.spinVel=0;
+  lapCrossed=false; triviaActive=false; pitsActive=false; qUsed=[];
+  wrongAnswerCooldownEnd=0;
+}
+
+function drawCar(x,y,angle){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(angle+Math.PI/2);
+  ctx.shadowColor='#e94560'; ctx.shadowBlur=12;
+  ctx.fillStyle='#e94560';
+  ctx.beginPath(); ctx.roundRect(-7,-13,14,26,3); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#ffffff55'; ctx.fillRect(-5,-11,10,8);
+  ctx.fillStyle='#ffe000';
+  ctx.fillRect(-8,11,5,3); ctx.fillRect(3,11,5,3);
+  if(car.fuel<=30){
+    ctx.fillStyle='#f5a623'; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText('⛽',0,-20);
+  }
+  ctx.restore();
+}
+
+function updateCar(){
+  if(triviaActive||pitsActive) return;
+  let now=Date.now();
+  let stunned=now<car.stunEnd;
+  if(stunned){
+    car.angle+=car.spinVel;
+    car.spinVel*=0.92;
+    car.speed*=0.85;
+    return;
+  }
+  const TURN=0.052,ACCEL=0.13,FRIC=0.96,MAX=5.2;
+  if(keys.left) car.angle-=TURN;
+  if(keys.right) car.angle+=TURN;
+  if(keys.up&&car.fuel>0) car.speed=Math.min(car.speed+ACCEL,MAX);
+  car.speed*=FRIC;
+  if(Math.abs(car.speed)<0.05) car.speed=0;
+  let nx=car.x+Math.cos(car.angle)*car.speed;
+  let ny=car.y+Math.sin(car.angle)*car.speed;
+  let cp=closestPointOnTrack(nx,ny);
+  if(cp.dist<trackWidth*0.92){car.x=nx;car.y=ny;}
+  else {
+    let tp=trackPath[cp.idx];
+    let pushX=tp[0]-car.x,pushY=tp[1]-car.y;
+    let len=Math.sqrt(pushX*pushX+pushY*pushY)||1;
+    car.x+=pushX/len*1.5; car.y+=pushY/len*1.5;
+    car.speed*=0.7;
+  }
+  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.055);
+
+  // Límites del mapa
+  let margin=14;
+  if(car.y<margin){car.y=margin; if(car.speed>0) car.speed*=0.5;}
+  if(car.y>canvas.height-margin){car.y=canvas.height-margin; if(car.speed>0) car.speed*=0.5;}
+  if(car.x<margin){car.x=margin; if(car.speed>0) car.speed*=0.5;}
+  if(car.x>canvas.width-margin){car.x=canvas.width-margin; if(car.speed>0) car.speed*=0.5;}
+
+  if(car.fuel<=0&&!pitsActive){ car.fuel=0; showPits(); return; }
+
+  obstacles.forEach(o=>{
+    if(now<o.cooldown) return;
+    let dx=car.x-o.x,dy=car.y-o.y;
+    if(Math.sqrt(dx*dx+dy*dy)<o.r+9){
+      o.cooldown=now+3500;
+      car.stunEnd=now+1200;
+      car.spinVel=(Math.random()>0.5?1:-1)*0.18;
+      car.speed=-1.5;
+      car.fuel=Math.max(0,car.fuel-10);
+      spawnHit(car.x,car.y);
+    }
+  });
+
+  // Vueltas
+  let sp=trackPath[4];
+  let dist=Math.sqrt((car.x-sp[0])**2+(car.y-sp[1])**2);
+  if(!lapCrossed&&dist<32&&car.speed>0.5){
+    lapCrossed=true; car.laps++; car.score+=50;
+    if(car.laps>=3){setTimeout(showWin,300);return;}
+  }
+  if(dist>65) lapCrossed=false;
+}
+
+// ─── PITS ──────────────────────────────────────────────────────────────────────
+let pitsTimer=null;
+function showPits(){
+  pitsActive=true; car.speed=0;
+  document.getElementById('pits-panel').style.display='flex';
+  document.getElementById('pits-bar').style.width='0%';
+  let duration=4000, start=Date.now();
+  let msgs=['El equipo está arreglando el carro...','Cambiando llantas...','Revisando el motor...','Llenando medio tanque...'];
+  let mi=0;
+  document.getElementById('pits-msg').textContent=msgs[0];
+  function tick(){
+    let elapsed=Date.now()-start;
+    let pct=Math.min(elapsed/duration*100,100);
+    document.getElementById('pits-bar').style.width=pct+'%';
+    let newMi=Math.floor((elapsed/duration)*msgs.length);
+    if(newMi!==mi&&newMi<msgs.length){mi=newMi;document.getElementById('pits-msg').textContent=msgs[mi];}
+    let remaining=Math.max(0,Math.ceil((duration-elapsed)/1000));
+    document.getElementById('pits-countdown').textContent=remaining>0?remaining+'s':'¡Listo!';
+    if(elapsed<duration){pitsTimer=setTimeout(tick,80);} else{closePits();}
+  }
+  tick();
+}
+function closePits(){
+  car.fuel=50;
+  document.getElementById('pits-panel').style.display='none';
+  pitsActive=false;
+}
+
+// ─── HUD ───────────────────────────────────────────────────────────────────────
+function updateHUD(){
+  document.getElementById('laps').textContent=car.laps+'/3';
+  document.getElementById('score').textContent=car.score;
+  document.getElementById('spd').textContent=Math.round(Math.abs(car.speed)*10);
+  let f=Math.round(car.fuel);
+  document.getElementById('fuel-num').textContent=f;
+  document.getElementById('fuel-bar').style.width=f+'%';
+  document.getElementById('fuel-bar').style.background=f>50?'#00c896':f>25?'#f5a623':'#e94560';
+
+  let now=Date.now();
+  const COOLDOWN_MS=10000;
+  let fuelBtn=document.getElementById('fuel-btn');
+  let cdFill=document.getElementById('cd-fill');
+  let btnLabel=document.getElementById('fuel-btn-label');
+  let inWrongCooldown=now<wrongAnswerCooldownEnd;
+  let wrongElapsed=inWrongCooldown?COOLDOWN_MS-(wrongAnswerCooldownEnd-now):0;
+
+  if(triviaActive||pitsActive||car.fuel>30||Date.now()<car.stunEnd){
+    fuelBtn.disabled=true; fuelBtn.classList.remove('cooling');
+    cdFill.style.width='0%'; btnLabel.textContent='⛽ COMBUSTIBLE';
+  } else if(inWrongCooldown){
+    let pct=Math.min(wrongElapsed/COOLDOWN_MS*100,100);
+    let remaining=Math.ceil((wrongAnswerCooldownEnd-now)/1000);
+    fuelBtn.disabled=true; fuelBtn.classList.add('cooling');
+    cdFill.style.width=pct+'%'; btnLabel.textContent='⛽ '+remaining+'s...';
+  } else {
+    fuelBtn.disabled=false; fuelBtn.classList.remove('cooling');
+    cdFill.style.width='0%'; btnLabel.textContent='⛽ COMBUSTIBLE';
+  }
+  document.getElementById('status-msg').textContent='';
+}
+
+// ─── TRIVIA ────────────────────────────────────────────────────────────────────
+const QUESTIONS=[
+  {q:"¿Cuál es la capital de Francia?",opts:["Madrid","París","Roma","Berlín"],ans:1},
+  {q:"¿Cuántos lados tiene un hexágono?",opts:["5","6","7","8"],ans:1},
+  {q:"¿Cuál planeta es el más grande del sistema solar?",opts:["Saturno","Marte","Júpiter","Neptuno"],ans:2},
+  {q:"¿En qué año llegó el hombre a la luna?",opts:["1965","1969","1972","1980"],ans:1},
+  {q:"¿Cuál es el símbolo químico del oro?",opts:["Go","Ag","Au","Fe"],ans:2},
+  {q:"¿Cuántos continentes hay en la Tierra?",opts:["5","6","7","8"],ans:2},
+  {q:"¿Quién pintó la Mona Lisa?",opts:["Picasso","Da Vinci","Monet","Rembrandt"],ans:1},
+  {q:"¿Cuál es el animal terrestre más rápido?",opts:["León","Guepardo","Caballo","Tigre"],ans:1},
+];
+const WIN_PHRASES=["¡Eso sí que es cerebro de piloto! 🧠","¡Correcto! El tanque te lo ganaste. 🔥","¡Exacto! ¡Ni Google lo diría mejor! 🎯","¡Boom! Sabías esa con los ojos cerrados. ⚡","¡Genio al volante! Combustible recargado. 🏁"];
+const LOSE_PHRASES=["¡Casi! Pero el tanque sigue igual.","Fallaste — el combustible no perdona.","No era esa... sigue manejando con cuidado.","¡Uy! Respuesta incorrecta. Nivel de gasolina sin cambios."];
+
+function getQuestion(){
+  if(qUsed.length>=QUESTIONS.length) qUsed=[];
+  let avail=QUESTIONS.map((_,i)=>i).filter(i=>!qUsed.includes(i));
+  let pick=avail[Math.floor(Math.random()*avail.length)];
+  qUsed.push(pick); return QUESTIONS[pick];
+}
+
+function requestFuel(){
+  if(triviaActive||pitsActive||car.fuel>30||Date.now()<car.stunEnd) return;
+  if(Date.now()<wrongAnswerCooldownEnd) return;
+  triviaActive=true;
+  let q=getQuestion();
+  document.getElementById('trivia-question').textContent=q.q;
+  let ow=document.getElementById('opts-wrap');
+  ow.innerHTML='';
+  document.getElementById('trivia-result').textContent='';
+  q.opts.forEach((o,i)=>{
+    let b=document.createElement('button');
+    b.className='opt-btn'; b.textContent=o;
+    b.onclick=()=>answerQ(i,q.ans,b);
+    ow.appendChild(b);
+  });
+  document.getElementById('trivia-panel').style.display='flex';
+}
+
+function answerQ(chosen,correct,btn){
+  document.querySelectorAll('.opt-btn').forEach(b=>b.onclick=null);
+  let corrBtn=document.querySelectorAll('.opt-btn')[correct];
+  let res=document.getElementById('trivia-result');
+  if(chosen===correct){
+    btn.classList.add('correct');
+    res.style.color='#00c896';
+    res.textContent=WIN_PHRASES[Math.floor(Math.random()*WIN_PHRASES.length)];
+    car.fuel=Math.min(100,car.fuel+30);
+    car.score+=25;
+    spawnStars(car.x,car.y);
+  } else {
+    btn.classList.add('wrong');
+    corrBtn.classList.add('correct');
+    res.style.color='#e94560';
+    res.textContent=LOSE_PHRASES[Math.floor(Math.random()*LOSE_PHRASES.length)];
+    wrongAnswerCooldownEnd=Date.now()+10000;
+  }
+  setTimeout(closeTrivia,2000);
+}
+
+function closeTrivia(){
+  document.getElementById('trivia-panel').style.display='none';
+  triviaActive=false;
+}
+
+// ─── WIN ───────────────────────────────────────────────────────────────────────
+function showWin(){
+  gameRunning=false;
+  let ov=document.getElementById('overlay');
+  ov.innerHTML=`<h2 style="color:#f5a623">🏆 GANASTE!</h2>
+    <p style="color:#aaa">3 vueltas completadas<br>Puntaje: <span style="color:#fff;font-size:20px;">${car.score}</span> pts</p>
+    <p style="color:#aaa;font-size:11px;font-family:monospace;margin-top:4px;">Elige una pista:</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+      <button class="btn" id="track-btn-1" onclick="selectTrack(1)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 1<br><span style='font-size:9px;color:#888;'>HAIRPIN C</span></button>
+      <button class="btn" id="track-btn-2" onclick="selectTrack(2)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 2<br><span style='font-size:9px;color:#888;'>KARTING</span></button>
+      <button class="btn" id="track-btn-3" onclick="selectTrack(3)" style="background:#1a1a2e;border:2px solid #444;font-size:11px;padding:8px 14px;">🏁 PISTA 3<br><span style='font-size:9px;color:#888;'>ÓVALO</span></button>
+    </div>
+    <button class="btn" onclick="startGame()" style="margin-top:4px;">JUGAR DE NUEVO</button>`;
+  ov.style.display='flex';
+  selectTrack(selectedTrack);
+}
+
+// ─── GAME LOOP ─────────────────────────────────────────────────────────────────
+function gameLoop(){
+  if(!gameRunning) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawTrack();
+  drawObstacles();
+  drawParticles();
+  drawCar(car.x,car.y,car.angle);
+  updateCar();
+  updateHUD();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame(){
+  document.getElementById('overlay').style.display='none';
+  document.getElementById('pits-panel').style.display='none';
+  if(pitsTimer) clearTimeout(pitsTimer);
+  resize(); buildTrack(); placeObstacles(); initCar();
+  particles=[];
+  gameRunning=true;
+  requestAnimationFrame(gameLoop);
+}
+
+selectTrack(1);
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=true;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=true;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=true;
+  if(e.key===' '){e.preventDefault();requestFuel();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=false;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=false;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=false;
+});
+window.addEventListener('resize',()=>{resize();if(gameRunning){buildTrack();placeObstacles();}});
+</script>
