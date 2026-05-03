@@ -671,6 +671,9 @@ function handleClientData(d){
     finishers = d.finishers;
     if(!podiumShown) showPodium();
   }
+  if(d.type==='back-to-lobby'){
+    resetToLobby();
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -826,8 +829,15 @@ function showPodium(){
 }
 
 function backToLobby(){
+  if(isHost) broadcastToClients({ type:'back-to-lobby' });
+  resetToLobby();
+}
+
+function resetToLobby(){
   document.getElementById('podium-screen').style.display='none';
   document.getElementById('game-outer').style.display='none';
+  document.getElementById('host-room').style.display='none';
+  document.getElementById('client-room').style.display='none';
   gameRunning = false;
   if(peer){ peer.destroy(); peer = null; }
   players = {}; remoteStates = {}; finishers = []; clientConns = {}; hostConn = null;
