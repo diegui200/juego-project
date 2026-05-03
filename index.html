@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v20 — Multijugador</title>
+<title>Trivia Racer v21 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -630,6 +630,8 @@ async function joinRoom(){
     hostConn = peer.connect(hostPeerId, { reliable: true });
     hostConn.on('open', ()=>{
       document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
+      // Enviar nombre inmediatamente si el usuario escribió uno
+      if(nameVal) hostConn.send({ type:'name-change', name: nameVal });
     });
     hostConn.on('data', d => handleClientData(d));
     hostConn.on('close', ()=>showErr('Desconectado del host'));
@@ -657,12 +659,16 @@ function confirmName(){
 function handleClientData(d){
   if(d.type==='rejected'){ showErr('No se pudo unir: ' + d.reason); return; }
   if(d.type==='welcome'){
-    myId = d.playerId; // server-assigned (nuestro peer id real)
-    myName = d.name;
+    myId = d.playerId;
+    // Respetar el nombre que el usuario escribió; solo usar el random si no escribió nada
+    const typedName = document.getElementById('name-input').value.trim();
+    myName = typedName || d.name;
     myColor = d.color;
     myColorIdx = d.colorIdx;
     players = d.players;
     document.getElementById('name-input').value = myName;
+    // Si el usuario tenía nombre propio, confirmarlo al host
+    if(typedName) hostConn.send({ type:'name-change', name: myName });
     refreshClientList();
   }
   if(d.type==='players-update'){
