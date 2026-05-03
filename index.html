@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v19 — Multijugador</title>
+<title>Trivia Racer v20 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -303,7 +303,7 @@ canvas { display: block; width: 820px; height: 430px; }
 <div id="game-outer" style="display:none;">
 <div id="game-wrap">
   <div id="hud">
-    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/3</span></div>
+    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/5</span></div>
     <div class="hud-item"><span class="hud-label">Vel</span><span class="hud-val" id="spd">0</span></div>
     <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:100px;">
       <span style="color:#f5a623;font-size:13px;">⛽</span>
@@ -566,7 +566,7 @@ function handleHostData(pid, d){
   }
   if(d.type==='state-update'){
     remoteStates[pid] = d.state;
-    if(d.state.laps >= 3 && !d.state.finished) d.state.finished = true;
+    if(d.state.laps >= 5 && !d.state.finished) d.state.finished = true;
     checkMultiFinish(pid, d.state);
     // Relay este estado a TODOS los demás clientes (para que se vean entre sí)
     Object.entries(clientConns).forEach(([otherPid, conn])=>{
@@ -777,7 +777,7 @@ function spectatorLoop(ts){
 // ═══════════════════════════════════════════════════════
 function checkMultiFinish(pid, state){
   if(!gameRunning) return;
-  if(state.laps >= 3 && !finishers.find(f=>f.id===pid)){
+  if(state.laps >= 5 && !finishers.find(f=>f.id===pid)){
     const p = players[pid] || { id: pid, name: 'Jugador', color: '#888' };
     finishers.push({ id: pid, name: p.name, color: p.color, laps: state.laps });
     if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
@@ -891,7 +891,7 @@ function updateRankingHUD(){
     row.innerHTML = `<span class="rk-pos">${i+1}</span>
       <div class="rk-dot" style="background:${p.color}"></div>
       <span class="rk-name">${p.name}</span>
-      <span class="rk-laps">${p.laps}/3</span>`;
+      <span class="rk-laps">${p.laps}/5</span>`;
     rows.appendChild(row);
   });
 
@@ -1129,22 +1129,27 @@ function placeObstacles(){
 }
 
 function drawSkull(x,y,r,alpha){
+  // Charco de lodo
   ctx.save(); ctx.globalAlpha=alpha||1; ctx.translate(x,y);
-  ctx.shadowColor='#ff0000'; ctx.shadowBlur=14;
-  ctx.fillStyle='#cc0000';
-  ctx.beginPath(); ctx.arc(0,-r*0.12,r*0.68,0,Math.PI*2); ctx.fill();
-  ctx.fillRect(-r*0.52,-r*0.12,r*1.04,r*0.55);
-  ctx.fillStyle='#991111'; ctx.beginPath(); ctx.arc(0,r*0.33,r*0.4,0,Math.PI); ctx.fill();
-  ctx.shadowBlur=0; ctx.fillStyle='#fff';
-  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#000';
-  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#880000';
-  ctx.beginPath(); ctx.moveTo(-r*0.1,r*0.17); ctx.lineTo(r*0.1,r*0.17); ctx.lineTo(0,r*0.04); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#fff';
-  [-r*0.26,0,r*0.26].forEach(tx=>{ ctx.fillRect(tx-r*0.09,r*0.26,r*0.16,r*0.2); });
+  // Sombra exterior
+  ctx.shadowColor='#3a2a00'; ctx.shadowBlur=10;
+  // Charco base (elipse café oscuro)
+  ctx.beginPath(); ctx.ellipse(0, r*0.1, r*1.1, r*0.75, 0, 0, Math.PI*2);
+  ctx.fillStyle='#4a3210'; ctx.fill();
+  // Capa interior más clara
+  ctx.shadowBlur=0;
+  ctx.beginPath(); ctx.ellipse(0, r*0.08, r*0.82, r*0.54, 0, 0, Math.PI*2);
+  ctx.fillStyle='#6b4a1a'; ctx.fill();
+  // Reflejo brillante
+  ctx.beginPath(); ctx.ellipse(-r*0.22, -r*0.1, r*0.28, r*0.16, -0.4, 0, Math.PI*2);
+  ctx.fillStyle='rgba(180,130,60,0.35)'; ctx.fill();
+  // Burbujas de lodo
+  [[r*0.3,r*0.2,r*0.13],[r*-0.25,r*0.25,r*0.1],[r*0.05,-r*0.05,r*0.09]].forEach(([bx,by,br])=>{
+    ctx.beginPath(); ctx.arc(bx,by,br,0,Math.PI*2);
+    ctx.fillStyle='#3a2208'; ctx.fill();
+    ctx.beginPath(); ctx.arc(bx-br*0.3,by-br*0.3,br*0.3,0,Math.PI*2);
+    ctx.fillStyle='rgba(180,130,60,0.4)'; ctx.fill();
+  });
   ctx.restore();
 }
 
@@ -1155,7 +1160,7 @@ function drawObstacles(){
 
 // ─── PARTICLES ────────────────────────────────────────
 let particles=[];
-function spawnHit(x,y){ for(let i=0;i<14;i++) particles.push({x,y,r:3+Math.random()*4,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,color:'#ff3333',life:28}); }
+function spawnHit(x,y){ for(let i=0;i<14;i++) particles.push({x,y,r:3+Math.random()*4,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,color:'#6b4a1a',life:28}); }
 function spawnStars(x,y){ for(let i=0;i<10;i++) particles.push({x,y,r:2+Math.random()*3,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,color:'#ffe000',life:32}); }
 function drawParticles(){
   particles=particles.filter(p=>p.life>0);
@@ -1167,7 +1172,7 @@ function drawParticles(){
 let car={x:0,y:0,angle:0,speed:0,fuel:100,laps:0,score:0,stunEnd:0,spinVel:0};
 let keys={up:false,left:false,right:false};
 let gameRunning=false,triviaActive=false,pitsActive=false;
-let lapCrossed=false,qUsed=[];
+let lapCrossed=false,carMidPassed=false,qUsed=[];
 let wrongAnswerCooldownEnd=0;
 
 function initCar(){
@@ -1177,7 +1182,7 @@ function initCar(){
   car.angle=Math.atan2(dir[1],dir[0]);
   car.speed=0; car.fuel=100; car.laps=0; car.score=0;
   car.stunEnd=0; car.spinVel=0;
-  lapCrossed=false; triviaActive=false; pitsActive=false; qUsed=[];
+  lapCrossed=false; carMidPassed=false; triviaActive=false; pitsActive=false; qUsed=[];
   wrongAnswerCooldownEnd=0; myFinished=false;
   _lastFrameTime=0;
 }
@@ -1250,15 +1255,21 @@ function updateCar(dt=1){
     }
   });
 
-  // Lap detection
+  // Lap detection — anti-cheat con checkpoints
+  // Se requiere pasar por el checkpoint de media pista antes de contar la vuelta
   let sp=trackPath[4];
   let dist=Math.sqrt((car.x-sp[0])**2+(car.y-sp[1])**2);
-  if(!lapCrossed&&dist<32&&car.speed>0.5){
-    lapCrossed=true; car.laps++; car.score+=50;
-    if(car.laps>=3 && !myFinished){
+  // Checkpoint de media vuelta: punto al 50% de la pista
+  let midIdx=Math.floor(trackPath.length/2);
+  let mp=trackPath[midIdx];
+  let midDist=Math.sqrt((car.x-mp[0])**2+(car.y-mp[1])**2);
+  if(!carMidPassed && midDist<38) carMidPassed=true;
+  if(!lapCrossed && dist<32 && car.speed>0.5 && carMidPassed){
+    lapCrossed=true; carMidPassed=false; car.laps++; car.score+=50;
+    if(car.laps>=5 && !myFinished){
       myFinished=true;
       const p = players[myId] || {name: myName, color: myColor};
-      finishers.push({ id: myId, name: p.name, color: p.color, laps: 3 });
+      finishers.push({ id: myId, name: p.name, color: p.color, laps: 5 });
       if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
         if(isHost) broadcastToClients({ type:'podium', finishers });
         if(!podiumShown) showPodium();
@@ -1292,7 +1303,7 @@ function closePits(){ car.fuel=50; document.getElementById('pits-panel').style.d
 
 // ─── HUD ──────────────────────────────────────────────
 function updateHUD(){
-  document.getElementById('laps').textContent=car.laps+'/3';
+  document.getElementById('laps').textContent=car.laps+'/5';
   document.getElementById('spd').textContent=Math.round(Math.abs(car.speed)*10);
   let f=Math.round(car.fuel);
   document.getElementById('fuel-num').textContent=f;
