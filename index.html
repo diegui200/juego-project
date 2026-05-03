@@ -40,56 +40,54 @@
   /* ── CONTROLES MÓVIL ── */
   #controls {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px; background: #0f0f1a; border-top: 1px solid #222; gap: 8px;
+    padding: 8px 12px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px;
   }
-  /* Volante izquierda */
-  #steering-wrap { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
-  #steering-ring {
-    width: 90px; height: 90px; border-radius: 50%;
-    border: 4px solid #444; background: #1a1a2e;
-    position: relative; overflow: hidden; touch-action: none; cursor: grab;
+  /* Zona izquierda: 2 botones dirección */
+  #dir-wrap {
+    display: flex; gap: 6px; align-items: center; flex-shrink: 0;
   }
-  #steering-ring::before {
-    content: '🎮'; font-size: 30px; position: absolute;
-    top: 50%; left: 50%; transform: translate(-50%,-50%);
+  .dir-btn {
+    width: 72px; height: 72px; border-radius: 14px;
+    background: #1e1e30; border: 2.5px solid #555;
+    color: #fff; font-size: 28px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    touch-action: none; /* permite multi-touch */
+    box-shadow: 0 4px 0 #0a0a18;
+    transition: transform 0.05s, box-shadow 0.05s, background 0.05s;
+    -webkit-tap-highlight-color: transparent;
   }
-  #steering-indicator {
-    position: absolute; bottom: 6px; left: 50%;
-    transform: translateX(-50%);
-    width: 6px; height: 18px; border-radius: 3px;
-    background: #e94560; transition: transform 0.05s;
-    transform-origin: 3px 0px;
+  .dir-btn:active, .dir-btn.pressed {
+    background: #e94560; border-color: #e94560;
+    transform: translateY(3px); box-shadow: 0 1px 0 #0a0a18;
   }
-  .steer-arrow {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    font-size: 20px; color: #666; pointer-events: none; user-select: none;
-  }
-  #steer-left { left: 6px; }
-  #steer-right { right: 6px; }
   /* Botón gasolina centro */
   #fuel-center { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
   #fuel-btn {
     background: #f5a623; border: none; color: #000;
-    padding: 11px 18px; font-size: 12px; font-weight: bold;
+    padding: 11px 14px; font-size: 11px; font-weight: bold;
     border-radius: 10px; cursor: pointer; font-family: 'Courier New', monospace;
     letter-spacing: 1px; position: relative; overflow: hidden;
-    min-width: 110px; touch-action: manipulation;
+    min-width: 100px; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   #fuel-btn:disabled { background: #555; color: #999; cursor: not-allowed; }
   #fuel-btn.cooling { background: #333; color: #f5a623; border: 1.5px solid #f5a623; cursor: not-allowed; }
   #fuel-btn .cooldown-fill { position: absolute; left: 0; top: 0; height: 100%; background: #f5a62340; transition: width 0.1s linear; border-radius: 10px; }
   #fuel-btn .btn-label { position: relative; z-index: 1; }
   #pc-hint { color: #444; font-size: 9px; font-family: monospace; text-align: center; }
-  /* Pedal derecha */
+  /* Pedal acelerador derecha */
   #pedal-wrap { flex-shrink: 0; }
   #pedal-btn {
-    width: 80px; height: 80px; border-radius: 50%;
+    width: 72px; height: 72px; border-radius: 50%;
     background: radial-gradient(circle at 40% 35%, #3a3, #1a4a1a);
-    border: 4px solid #2a6a2a; color: #fff; font-size: 26px;
+    border: 3px solid #2a6a2a; color: #fff; font-size: 24px;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; user-select: none; -webkit-user-select: none;
-    touch-action: manipulation; box-shadow: 0 4px 0 #0a2a0a;
+    touch-action: none;
+    box-shadow: 0 4px 0 #0a2a0a;
     transition: transform 0.05s, box-shadow 0.05s;
+    -webkit-tap-highlight-color: transparent;
   }
   #pedal-btn:active, #pedal-btn.pressed {
     transform: translateY(3px); box-shadow: 0 1px 0 #0a2a0a;
@@ -143,14 +141,12 @@
 
   <div id="status-bar"><span id="status-msg"></span></div>
 
-  <!-- CONTROLES: Volante | Gasolina | Pedal -->
+  <!-- CONTROLES: ◀ ▶ | Gasolina | Pedal -->
   <div id="controls">
-    <!-- Volante izquierda -->
-    <div id="steering-wrap">
-      <div id="steering-ring" id="steer-zone">
-        <span class="steer-arrow" id="steer-left">◀</span>
-        <span class="steer-arrow" id="steer-right">▶</span>
-      </div>
+    <!-- Botones dirección izquierda -->
+    <div id="dir-wrap">
+      <div class="dir-btn" id="btn-left">◀</div>
+      <div class="dir-btn" id="btn-right">▶</div>
     </div>
     <!-- Combustible centro -->
     <div id="fuel-center">
@@ -162,7 +158,7 @@
     </div>
     <!-- Pedal acelerador derecha -->
     <div id="pedal-wrap">
-      <div id="pedal-btn">🔴</div>
+      <div id="pedal-btn">🟢</div>
     </div>
   </div>
 </div></div>
@@ -833,43 +829,37 @@ function startGame(){
 
 selectTrack(1);
 
-// ─── CONTROLES MÓVIL: VOLANTE + PEDAL ──────────────────────────────────────
+// ─── CONTROLES MÓVIL: BOTONES DIRECCIÓN + PEDAL ─────────────────────────────
+// Multi-touch: cada elemento rastrea sus propios touches por identificador.
+// Así puedes tener ◀ o ▶ presionado con un dedo y el pedal con otro.
 (function(){
-  // Pedal acelerador
-  const pedal = document.getElementById('pedal-btn');
-  pedal.addEventListener('touchstart', e=>{ e.preventDefault(); keys.up=true; pedal.classList.add('pressed'); }, {passive:false});
-  pedal.addEventListener('touchend',   e=>{ e.preventDefault(); keys.up=false; pedal.classList.remove('pressed'); }, {passive:false});
-  pedal.addEventListener('mousedown',  ()=>{ keys.up=true; pedal.classList.add('pressed'); });
-  pedal.addEventListener('mouseup',    ()=>{ keys.up=false; pedal.classList.remove('pressed'); });
 
-  // Volante — touch/mouse drag horizontal
-  const ring = document.getElementById('steering-ring');
-  let steerActive = false, steerStartX = 0;
-  const DEAD = 8, FULL = 44; // píxeles para activar dirección
-
-  function steerStart(x){ steerActive=true; steerStartX=x; }
-  function steerMove(x){
-    if(!steerActive) return;
-    const d = x - steerStartX;
-    keys.left  = d < -DEAD;
-    keys.right = d >  DEAD;
-    // Animar indicador
-    const angle = Math.max(-45, Math.min(45, d / FULL * 45));
-    const ind = document.getElementById('steering-indicator');
-    if(ind) ind.style.transform = 'translateX(-50%) rotate(' + angle + 'deg)';
-  }
-  function steerEnd(){
-    steerActive=false; keys.left=false; keys.right=false;
-    const ind = document.getElementById('steering-indicator');
-    if(ind) ind.style.transform = 'translateX(-50%) rotate(0deg)';
+  function bindBtn(el, keyName){
+    el.addEventListener('touchstart', e=>{
+      e.preventDefault();
+      keys[keyName] = true;
+      el.classList.add('pressed');
+    }, {passive:false});
+    el.addEventListener('touchend', e=>{
+      e.preventDefault();
+      // Solo soltar si no quedan touches sobre este elemento
+      keys[keyName] = false;
+      el.classList.remove('pressed');
+    }, {passive:false});
+    el.addEventListener('touchcancel', e=>{
+      keys[keyName] = false;
+      el.classList.remove('pressed');
+    }, {passive:false});
+    // Mouse fallback para PC
+    el.addEventListener('mousedown', ()=>{ keys[keyName]=true;  el.classList.add('pressed'); });
+    el.addEventListener('mouseup',   ()=>{ keys[keyName]=false; el.classList.remove('pressed'); });
+    el.addEventListener('mouseleave',()=>{ keys[keyName]=false; el.classList.remove('pressed'); });
   }
 
-  ring.addEventListener('touchstart', e=>{ e.preventDefault(); steerStart(e.touches[0].clientX); }, {passive:false});
-  ring.addEventListener('touchmove',  e=>{ e.preventDefault(); steerMove(e.touches[0].clientX); }, {passive:false});
-  ring.addEventListener('touchend',   e=>{ e.preventDefault(); steerEnd(); }, {passive:false});
-  ring.addEventListener('mousedown',  e=>{ steerStart(e.clientX); });
-  window.addEventListener('mousemove', e=>{ steerMove(e.clientX); });
-  window.addEventListener('mouseup',   ()=>{ steerEnd(); });
+  bindBtn(document.getElementById('btn-left'),  'left');
+  bindBtn(document.getElementById('btn-right'), 'right');
+  bindBtn(document.getElementById('pedal-btn'), 'up');
+
 })();
 
 document.addEventListener('keydown',e=>{
