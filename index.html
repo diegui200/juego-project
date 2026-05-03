@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Trivia Racer v15 — Multijugador</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; font-family: 'Courier New', monospace; }
+
+/* ── WRAPPER ── */
+#game-outer { width: 100%; max-width: 840px; display: flex; flex-direction: column; background: #1a1a2e; border-radius: 12px; overflow: hidden; }
+
+/* ── LOBBY ── */
+#lobby {
+  position: fixed; inset: 0; background: rgba(5,5,15,0.97);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0; z-index: 100; padding: 20px;
+}
+#lobby h1 { color: #e94560; font-size: 26px; letter-spacing: 4px; margin-bottom: 6px; }
+#lobby .sub { color: #555; font-size: 10px; letter-spacing: 2px; margin-bottom: 24px; }
+
+.lobby-card {
+  background: #12121f; border: 1.5px solid #333; border-radius: 12px;
+  padding: 20px 24px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px;
+}
+.lobby-card h2 { font-size: 13px; color: #888; letter-spacing: 2px; text-align: center; }
+.lobby-or {
+  color: #444; font-size: 11px; text-align: center; margin: 8px 0; letter-spacing: 2px;
+}
+.lbtn {
+  background: #e94560; color: #fff; border: none; padding: 12px 20px;
+  font-size: 13px; font-weight: bold; border-radius: 8px; cursor: pointer;
+  letter-spacing: 1px; font-family: 'Courier New', monospace; width: 100%;
+  transition: background 0.15s;
+}
+.lbtn:hover { background: #c73450; }
+.lbtn.secondary { background: #1e1e30; border: 1.5px solid #444; color: #aaa; }
+.lbtn.secondary:hover { border-color: #e94560; color: #fff; }
+.linput {
+  background: #0f0f1a; border: 1.5px solid #333; color: #fff;
+  padding: 10px 14px; font-size: 14px; border-radius: 8px; width: 100%;
+  font-family: 'Courier New', monospace; text-align: center; letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.linput:focus { outline: none; border-color: #e94560; }
+.linput::placeholder { color: #444; letter-spacing: 1px; text-transform: none; }
+
+/* ── HOST WAITING ROOM ── */
+#host-room {
+  position: fixed; inset: 0; background: rgba(5,5,15,0.97);
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 100; padding: 20px;
+}
+#host-room h2 { color: #e94560; font-size: 18px; letter-spacing: 3px; }
+#room-code-box {
+  background: #0f0f1a; border: 2px solid #f5a623;
+  border-radius: 10px; padding: 14px 28px; text-align: center;
+}
+#room-code { font-size: 36px; letter-spacing: 10px; color: #f5a623; font-weight: bold; }
+#room-code-hint { font-size: 10px; color: #666; margin-top: 4px; }
+#host-config { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+#host-config label { color: #888; font-size: 11px; }
+#max-players-sel {
+  background: #0f0f1a; border: 1.5px solid #444; color: #fff;
+  padding: 6px 10px; border-radius: 6px; font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+#track-sel-host { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.ts-btn {
+  background: #1a1a2e; border: 2px solid #444; color: #aaa;
+  padding: 6px 12px; font-size: 10px; border-radius: 6px;
+  cursor: pointer; font-family: 'Courier New', monospace;
+  transition: all 0.1s;
+}
+.ts-btn.active { border-color: #e94560; color: #fff; }
+#players-list {
+  background: #0f0f1a; border: 1px solid #333; border-radius: 8px;
+  width: 100%; max-width: 360px; min-height: 80px; padding: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+#players-list-title { color: #666; font-size: 10px; letter-spacing: 2px; margin-bottom: 4px; }
+.player-row {
+  display: flex; align-items: center; gap: 8px;
+  background: #12121f; border-radius: 6px; padding: 6px 10px;
+}
+.player-dot { width: 10px; height: 10px; border-radius: 50%; }
+.player-name-txt { color: #ddd; font-size: 12px; flex: 1; }
+.player-badge { color: #555; font-size: 9px; }
+
+/* ── CLIENT WAITING ── */
+#client-room {
+  position: fixed; inset: 0; background: rgba(5,5,15,0.97);
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 100; padding: 20px; text-align: center;
+}
+#client-room h2 { color: #e94560; font-size: 18px; letter-spacing: 3px; }
+#name-input {
+  background: #0f0f1a; border: 1.5px solid #444; color: #fff;
+  padding: 10px 14px; font-size: 14px; border-radius: 8px; width: 100%; max-width: 280px;
+  font-family: 'Courier New', monospace; text-align: center;
+}
+#name-input:focus { outline: none; border-color: #f5a623; }
+#client-status { color: #666; font-size: 11px; min-height: 16px; }
+#client-players-list {
+  background: #0f0f1a; border: 1px solid #333; border-radius: 8px;
+  width: 100%; max-width: 320px; min-height: 60px; padding: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+/* ── PODIUM ── */
+#podium-screen {
+  position: fixed; inset: 0; background: rgba(5,5,15,0.97);
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; z-index: 200; padding: 20px;
+}
+#podium-screen h2 { color: #f5a623; font-size: 24px; letter-spacing: 4px; }
+#podium-places { display: flex; align-items: flex-end; gap: 12px; justify-content: center; }
+.podium-block {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.podium-car { font-size: 28px; }
+.podium-nametag {
+  background: #1a1a2e; border-radius: 6px; padding: 4px 10px;
+  font-size: 11px; font-weight: bold; text-align: center; min-width: 80px;
+}
+.podium-base {
+  border-radius: 6px 6px 0 0; width: 80px; display: flex; align-items: flex-end;
+  justify-content: center; padding-bottom: 4px; font-size: 22px; font-weight: bold;
+  font-family: 'Courier New', monospace;
+}
+.p1 .podium-base { height: 90px; background: linear-gradient(#c9a227, #8a6e1a); color: #ffe; }
+.p2 .podium-base { height: 65px; background: linear-gradient(#8a8a8a, #4a4a4a); color: #eee; }
+.p3 .podium-base { height: 45px; background: linear-gradient(#c6603a, #6b3120); color: #fdd; }
+
+/* ── HUD ── */
+#hud {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 12px; background: #0f0f1a; border-bottom: 2px solid #e94560; gap: 6px;
+}
+.hud-item { display: flex; flex-direction: column; align-items: center; }
+.hud-label { font-size: 9px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+.hud-val { font-size: 16px; font-weight: bold; color: #fff; }
+#fuel-bar-bg { flex: 1; height: 11px; background: #333; border-radius: 6px; overflow: hidden; }
+#fuel-bar { height: 100%; width: 100%; border-radius: 6px; transition: width 0.15s; }
+
+/* ── RANKING HUD ── */
+#ranking-hud {
+  position: absolute; top: 6px; right: 8px;
+  background: rgba(10,10,20,0.82); border: 1px solid #333;
+  border-radius: 8px; padding: 6px 10px; z-index: 10;
+  min-width: 120px;
+}
+#ranking-hud .rk-title { color: #555; font-size: 8px; letter-spacing: 2px; margin-bottom: 4px; }
+.rk-row { display: flex; align-items: center; gap: 5px; font-size: 10px; line-height: 1.6; }
+.rk-pos { color: #f5a623; font-weight: bold; width: 14px; }
+.rk-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.rk-name { color: #ccc; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70px; }
+.rk-laps { color: #666; font-size: 9px; }
+.rk-row.me .rk-name { color: #fff; font-weight: bold; }
+.rk-row.finished .rk-name { color: #f5a623; }
+
+/* ── CANVAS ── */
+#canvas-wrap { position: relative; width: 820px; height: 430px; }
+#canvas-scale-wrap { width: 100%; overflow: hidden; display: flex; justify-content: center; background: #1a1a2e; }
+canvas { display: block; width: 820px; height: 430px; }
+
+/* ── OVERLAYS ── */
+#overlay { position: absolute; inset: 0; background: rgba(10,10,20,0.93); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 20; }
+#overlay h2 { color: #e94560; font-size: 22px; letter-spacing: 3px; }
+#overlay p { color: #aaa; font-size: 11px; text-align: center; max-width: 280px; line-height: 1.6; }
+.btn { background: #e94560; color: #fff; border: none; padding: 10px 26px; font-size: 13px; font-weight: bold; border-radius: 6px; cursor: pointer; letter-spacing: 1px; font-family: 'Courier New', monospace; }
+.btn:hover { background: #c73450; }
+#trivia-panel { position: absolute; inset: 0; background: rgba(10,10,20,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 30; padding: 20px; }
+#trivia-panel h3 { color: #f5a623; font-size: 12px; letter-spacing: 2px; }
+#trivia-question { color: #fff; font-size: 14px; text-align: center; max-width: 310px; line-height: 1.5; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; max-width: 330px; }
+.opt-btn { background: #1a1a2e; border: 1.5px solid #444; color: #ddd; padding: 10px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; text-align: center; font-family: 'Courier New', monospace; }
+.opt-btn:hover { border-color: #e94560; color: #fff; }
+.opt-btn.correct { border-color: #00c896; color: #00c896; background: #00c89620; }
+.opt-btn.wrong { border-color: #e94560; color: #e94560; background: #e9456020; }
+#trivia-result { font-size: 13px; text-align: center; min-height: 20px; font-weight: bold; }
+#status-bar { background: #0f0f1a; padding: 3px 14px; min-height: 18px; display: flex; align-items: center; justify-content: center; }
+#status-msg { color: #f5a623; font-size: 11px; }
+#pits-panel { position: absolute; inset: 0; background: rgba(8,8,18,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 35; }
+#pits-panel h3 { color: #f5a623; font-size: 20px; letter-spacing: 3px; }
+#pits-panel p { color: #aaa; font-size: 12px; text-align: center; }
+#pits-bar-bg { width: 220px; height: 10px; background: #333; border-radius: 5px; overflow: hidden; }
+#pits-bar { height: 100%; width: 0%; background: #f5a623; border-radius: 5px; transition: width 0.1s; }
+
+/* ── CONTROLES ── */
+#controls { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px; }
+#dir-wrap { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.dir-btn {
+  width: 72px; height: 72px; border-radius: 14px; background: #1e1e30;
+  border: 2.5px solid #555; color: #fff; font-size: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  touch-action: none; box-shadow: 0 4px 0 #0a0a18;
+  transition: transform .05s, box-shadow .05s, background .05s;
+  -webkit-tap-highlight-color: transparent;
+}
+.dir-btn:active, .dir-btn.pressed { background: #e94560; border-color: #e94560; transform: translateY(3px); box-shadow: 0 1px 0 #0a0a18; }
+#fuel-center { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+#fuel-btn {
+  background: #f5a623; border: none; color: #000; padding: 11px 14px; font-size: 11px;
+  font-weight: bold; border-radius: 10px; cursor: pointer; font-family: 'Courier New', monospace;
+  letter-spacing: 1px; position: relative; overflow: hidden; min-width: 100px;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+#fuel-btn:disabled { background: #555; color: #999; cursor: not-allowed; }
+#fuel-btn.cooling { background: #333; color: #f5a623; border: 1.5px solid #f5a623; cursor: not-allowed; }
+#fuel-btn .cooldown-fill { position: absolute; left: 0; top: 0; height: 100%; background: #f5a62340; transition: width .1s linear; border-radius: 10px; }
+#fuel-btn .btn-label { position: relative; z-index: 1; }
+#pc-hint { color: #444; font-size: 9px; text-align: center; }
+#pedal-wrap { flex-shrink: 0; }
+#pedal-btn {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #3a3, #1a4a1a);
+  border: 3px solid #2a6a2a; color: #fff; font-size: 24px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  touch-action: none; box-shadow: 0 4px 0 #0a2a0a;
+  transition: transform .05s, box-shadow .05s; -webkit-tap-highlight-color: transparent;
+}
+#pedal-btn:active, #pedal-btn.pressed { transform: translateY(3px); box-shadow: 0 1px 0 #0a2a0a; background: radial-gradient(circle at 40% 35%, #5c5, #2a6a2a); }
+
+/* ── ERROR TOAST ── */
+#err-toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: #e94560; color: #fff; padding: 10px 20px; border-radius: 8px;
+  font-size: 12px; z-index: 999; display: none; max-width: 320px; text-align: center;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ LOBBY ═══════════════ -->
+<div id="lobby">
+  <h1>⚡ TRIVIA RACER</h1>
+  <p class="sub">MULTIJUGADOR</p>
+  <div class="lobby-card">
+    <h2>¿CÓMO QUIERES JUGAR?</h2>
+    <button class="lbtn" onclick="showHostRoom()">🏁 CREAR SALA (HOST)</button>
+    <div class="lobby-or">─── ó ───</div>
+    <input class="linput" id="join-code-input" placeholder="Ingresa código de sala" maxlength="6">
+    <input class="linput" id="join-name-input" placeholder="Tu nombre (opcional)" maxlength="16" style="letter-spacing:1px;text-transform:none;">
+    <button class="lbtn secondary" onclick="joinRoom()">🚗 UNIRSE A SALA</button>
+  </div>
+</div>
+
+<!-- ═══════════════ HOST WAITING ROOM ═══════════════ -->
+<div id="host-room">
+  <h2>🏁 SALA DE ESPERA</h2>
+  <div id="room-code-box">
+    <div id="room-code">------</div>
+    <div id="room-code-hint">Comparte este código con los jugadores</div>
+  </div>
+  <div id="host-config">
+    <label>Máx. jugadores:
+      <select id="max-players-sel">
+        <option value="5">5</option>
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="30">30</option>
+      </select>
+    </label>
+    <label style="color:#888;font-size:11px;">Pista:</label>
+    <div id="track-sel-host">
+      <button class="ts-btn active" onclick="hostSelectTrack(1,this)">🏁 DOBLE S</button>
+      <button class="ts-btn" onclick="hostSelectTrack(2,this)">🏁 KARTING</button>
+      <button class="ts-btn" onclick="hostSelectTrack(3,this)">🏁 ÓVALO</button>
+    </div>
+  </div>
+  <div id="players-list">
+    <div id="players-list-title">JUGADORES EN SALA</div>
+  </div>
+  <button class="lbtn" id="host-start-btn" onclick="hostStartGame()" style="max-width:280px;">▶ INICIAR JUEGO</button>
+  <p style="color:#555;font-size:10px;">Esperando jugadores...</p>
+</div>
+
+<!-- ═══════════════ CLIENT WAITING ═══════════════ -->
+<div id="client-room">
+  <h2>🚗 CONECTADO A LA SALA</h2>
+  <p style="color:#888;font-size:11px;">Cambia tu nombre si quieres:</p>
+  <input id="name-input" class="linput" style="max-width:280px;letter-spacing:1px;text-transform:none;" placeholder="Tu nombre" maxlength="16">
+  <button class="lbtn" onclick="confirmName()" style="max-width:280px;">✔ CONFIRMAR NOMBRE</button>
+  <div id="client-status">Esperando al host...</div>
+  <div id="client-players-list"></div>
+</div>
+
+<!-- ═══════════════ GAME ═══════════════ -->
+<div id="game-outer" style="display:none;">
+<div id="game-wrap">
+  <div id="hud">
+    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/3</span></div>
+    <div class="hud-item"><span class="hud-label">Vel</span><span class="hud-val" id="spd">0</span></div>
+    <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:100px;">
+      <span style="color:#f5a623;font-size:13px;">⛽</span>
+      <div id="fuel-bar-bg" style="flex:1;"><div id="fuel-bar"></div></div>
+      <span class="hud-val" id="fuel-num" style="font-size:13px;">100</span>
+    </div>
+    <div class="hud-item"><span class="hud-label">Pos</span><span class="hud-val" id="my-pos">-</span></div>
+  </div>
+
+  <div id="canvas-scale-wrap"><div id="canvas-wrap">
+    <canvas id="c"></canvas>
+    <div id="ranking-hud">
+      <div class="rk-title">POSICIONES</div>
+      <div id="ranking-rows"></div>
+    </div>
+    <div id="overlay" style="display:none;">
+      <h2>⚡ TRIVIA RACER</h2>
+    </div>
+    <div id="trivia-panel">
+      <h3>⛽ RECARGA DE COMBUSTIBLE</h3>
+      <div id="trivia-question"></div>
+      <div class="opts" id="opts-wrap"></div>
+      <div id="trivia-result"></div>
+    </div>
+    <div id="pits-panel">
+      <h3>🔧 PITS</h3>
+      <p id="pits-msg">El equipo está arreglando el carro...</p>
+      <div id="pits-bar-bg"><div id="pits-bar"></div></div>
+      <p id="pits-countdown" style="color:#f5a623;font-size:22px;font-weight:bold;"></p>
+    </div>
+  </div></div>
+
+  <div id="status-bar"><span id="status-msg"></span></div>
+  <div id="controls">
+    <div id="dir-wrap">
+      <div class="dir-btn" id="btn-left">◀</div>
+      <div class="dir-btn" id="btn-right">▶</div>
+    </div>
+    <div id="fuel-center">
+      <button id="fuel-btn" onclick="requestFuel()">
+        <div class="cooldown-fill" id="cd-fill"></div>
+        <span class="btn-label" id="fuel-btn-label">⛽ COMBUSTIBLE</span>
+      </button>
+      <span id="pc-hint">PC: flechas/WASD · ESPACIO=⛽</span>
+    </div>
+    <div id="pedal-wrap"><div id="pedal-btn">🟢</div></div>
+  </div>
+</div></div>
+
+<!-- ═══════════════ PODIUM ═══════════════ -->
+<div id="podium-screen">
+  <h2>🏆 PODIO FINAL</h2>
+  <div id="podium-places"></div>
+  <button class="lbtn" onclick="backToLobby()" style="max-width:260px;margin-top:10px;">↩ VOLVER AL LOBBY</button>
+</div>
+
+<div id="err-toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// COLORES DE CARRO POR JUGADOR
+// ═══════════════════════════════════════════════════════
+const CAR_COLORS = [
+  '#e94560','#00c896','#f5a623','#4a90e2','#b05eff',
+  '#ff6b35','#00d4ff','#ffe000','#ff69b4','#7fff00',
+  '#ff4444','#44ffaa','#ffd700','#88aaff','#dd88ff',
+  '#ff8800','#00ffcc','#ffff44','#ff88aa','#88ff44',
+];
+
+const NAMES_POOL = [
+  'Piloto Rojo','Turbo Azul','Relámpago','El Trompo','Neumático',
+  'Chicane','Nitro Fox','DriftKing','Velocidad','El Fantasma',
+  'Curva Brava','Motor Loco','El Torpedo','RacerX','Pista Libre',
+];
+
+function randomName(){ return NAMES_POOL[Math.floor(Math.random()*NAMES_POOL.length)] + ' ' + Math.floor(Math.random()*99+1); }
+
+// ═══════════════════════════════════════════════════════
+// ESTADO GLOBAL MULTIJUGADOR
+// ═══════════════════════════════════════════════════════
+let peer = null;          // PeerJS instance
+let isHost = false;
+let myId = '';            // peer ID local
+let myName = '';
+let myColor = CAR_COLORS[0];
+let myColorIdx = 0;
+let roomCode = '';        // = host peer ID (6 chars)
+let hostConn = null;      // cliente → conexión al host
+let clientConns = {};     // host → { peerId: DataConnection }
+let maxPlayers = 10;
+let selectedTrack = 1;
+
+// jugadores en sala: { id, name, color, colorIdx }
+let players = {};         // peerId → playerInfo
+
+// estado en juego de cada jugador: { x, y, angle, laps, finished, finishTime }
+let remoteStates = {};    // peerId → state
+
+let myFinished = false;
+let finishers = [];       // orden de llegada [{id,name,color,laps}]
+let podiumShown = false;
+
+// ═══════════════════════════════════════════════════════
+// UTILIDADES LOBBY
+// ═══════════════════════════════════════════════════════
+function showErr(msg, dur=3500){
+  const t = document.getElementById('err-toast');
+  t.textContent = msg; t.style.display='block';
+  setTimeout(()=>t.style.display='none', dur);
+}
+
+function hostSelectTrack(n, el){
+  selectedTrack = n;
+  document.querySelectorAll('.ts-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function addPlayerRow(container, id, name, color, badge=''){
+  const row = document.createElement('div');
+  row.className = 'player-row';
+  row.id = 'pr-'+id;
+  row.innerHTML = `<div class="player-dot" style="background:${color}"></div>
+    <span class="player-name-txt">${name}</span>
+    <span class="player-badge">${badge}</span>`;
+  container.appendChild(row);
+}
+
+function refreshHostList(){
+  const list = document.getElementById('players-list');
+  list.innerHTML = '<div id="players-list-title">JUGADORES EN SALA</div>';
+  // Mostrar etiqueta del host como espectador
+  const hostRow = document.createElement('div');
+  hostRow.className = 'player-row';
+  hostRow.innerHTML = `<div class="player-dot" style="background:#f5a623"></div>
+    <span class="player-name-txt" style="color:#f5a623">HOST</span>
+    <span class="player-badge" style="color:#f5a623">👁 espectador</span>`;
+  list.appendChild(hostRow);
+  // Luego los jugadores conectados
+  Object.values(players).forEach(p=>{
+    addPlayerRow(list, p.id, p.name, p.color, '');
+  });
+}
+function refreshClientList(){
+  const list = document.getElementById('client-players-list');
+  list.innerHTML = '';
+  Object.values(players).forEach(p=>{
+    addPlayerRow(list, p.id, p.name, p.color, p.id===myId?'(tú)':'');
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// SEÑALIZACIÓN — Firebase Realtime Database
+// INSTRUCCIONES DE CONFIGURACIÓN (1 vez, 3 minutos):
+//
+// 1. Ve a https://console.firebase.google.com
+// 2. "Crear proyecto" → ponle cualquier nombre → continuar
+// 3. En el menú izquierdo: "Realtime Database" → "Crear base de datos"
+// 4. Elige cualquier región → "Iniciar en modo de prueba" → Listo
+// 5. Copia la URL que aparece (ej: https://mi-juego-xxxxx-default-rtdb.firebaseio.com)
+// 6. Pégala abajo en FIREBASE_URL
+// ═══════════════════════════════════════════════════════
+
+const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
+
+function genCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for(let i=0;i<6;i++) c += chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+
+async function registerRoom(code, peerId){
+  if(!FIREBASE_URL){ console.warn('Firebase URL no configurada'); return; }
+  try {
+    await fetch(`${FIREBASE_URL}/rooms/${code}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId, ts: Date.now() })
+    });
+    window.addEventListener('beforeunload', ()=>{
+      navigator.sendBeacon(`${FIREBASE_URL}/rooms/${code}.json`, 'null');
+    });
+  } catch(e){ console.warn('registerRoom error', e); }
+}
+
+async function lookupRoom(code){
+  if(!FIREBASE_URL) return null;
+  try {
+    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000) return d.peerId;
+    return null;
+  } catch(e){ return null; }
+}
+
+const PEER_CFG = { debug: 0 };
+
+// ═══════════════════════════════════════════════════════
+// HOST FLOW
+// ═══════════════════════════════════════════════════════
+function showHostRoom(){
+  isHost = true;
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('host-room').style.display='flex';
+  document.getElementById('room-code').textContent = 'Conectando...';
+
+  roomCode = genCode();
+  peer = new Peer(PEER_CFG);
+  peer.on('open', async id => {
+    myId = id;
+    await registerRoom(roomCode, id);
+    document.getElementById('room-code').textContent = roomCode;
+    myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
+    // El host NO se agrega a players[] — es solo espectador, no compite
+    refreshHostList();
+  });
+  peer.on('error', e => showErr('Error PeerJS: ' + e.type));
+  peer.on('connection', onHostConnection);
+}
+
+
+
+function onHostConnection(conn){
+  const pid = conn.peer;
+  conn.on('open', ()=>{
+    maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+    if(Object.keys(clientConns).length >= maxPlayers - 1){
+      conn.send({ type:'rejected', reason:'Sala llena' });
+      conn.close(); return;
+    }
+    clientConns[pid] = conn;
+    const usedIdx = Object.values(players).map(p=>p.colorIdx);
+    let ci = 0; while(usedIdx.includes(ci)) ci++;
+    players[pid] = { id: pid, name: randomName(), color: CAR_COLORS[ci%CAR_COLORS.length], colorIdx: ci };
+    conn.send({ type:'welcome', playerId: pid, name: players[pid].name,
+                color: players[pid].color, colorIdx: ci, players: players });
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
+  });
+  conn.on('data', d => handleHostData(pid, d));
+  conn.on('close', ()=>{
+    delete clientConns[pid];
+    delete players[pid];
+    delete remoteStates[pid];
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
+  });
+}
+
+function broadcastToClients(msg){
+  Object.values(clientConns).forEach(c=>{ try{ c.send(msg); }catch(e){} });
+}
+
+function handleHostData(pid, d){
+  if(d.type==='name-change'){
+    if(players[pid]){ players[pid].name = d.name; }
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
+  }
+  if(d.type==='state-update'){
+    remoteStates[pid] = d.state;
+    if(d.state.laps >= 3 && !d.state.finished) d.state.finished = true;
+    checkMultiFinish(pid, d.state);
+    // Relay este estado a TODOS los demás clientes (para que se vean entre sí)
+    Object.entries(clientConns).forEach(([otherPid, conn])=>{
+      if(otherPid === pid) return; // no enviar de vuelta al mismo
+      try { conn.send({ type:'relay-state', fromId: pid, state: d.state }); } catch(e){}
+    });
+  }
+}
+
+function hostStartGame(){
+  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+  const msg = { type:'start', track: selectedTrack, players };
+  broadcastToClients(msg);
+  launchGame(selectedTrack, players);
+}
+
+// ═══════════════════════════════════════════════════════
+// CLIENT FLOW
+// ═══════════════════════════════════════════════════════
+async function joinRoom(){
+  const code = document.getElementById('join-code-input').value.trim().toUpperCase();
+  const nameVal = document.getElementById('join-name-input').value.trim();
+  if(code.length < 4){ showErr('Ingresa un código válido'); return; }
+
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('client-room').style.display='flex';
+  document.getElementById('client-status').textContent = 'Buscando sala...';
+
+  // Buscar el peer ID real del host en Firebase
+  let hostPeerId = null;
+  try {
+    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
+    if(r.ok){
+      const d = await r.json();
+      if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000){
+        hostPeerId = d.peerId;
+      }
+    }
+  } catch(e){}
+
+  if(!hostPeerId){
+    showErr('Sala no encontrada. Verifica el código.');
+    document.getElementById('client-room').style.display='none';
+    document.getElementById('lobby').style.display='flex';
+    return;
+  }
+
+  roomCode = code;
+  document.getElementById('client-status').textContent = 'Conectando al host...';
+
+  peer = new Peer(PEER_CFG);
+  peer.on('open', id => {
+    myId = id;
+    hostConn = peer.connect(hostPeerId, { reliable: true });
+    hostConn.on('open', ()=>{
+      document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
+    });
+    hostConn.on('data', d => handleClientData(d));
+    hostConn.on('close', ()=>showErr('Desconectado del host'));
+    hostConn.on('error', ()=>showErr('Error de conexión con el host'));
+  });
+  peer.on('error', e => {
+    showErr('Error al conectar. (' + e.type + ')');
+    document.getElementById('client-room').style.display='none';
+    document.getElementById('lobby').style.display='flex';
+  });
+
+  if(nameVal) document.getElementById('name-input').value = nameVal;
+}
+
+function confirmName(){
+  const n = document.getElementById('name-input').value.trim();
+  if(!n) return;
+  myName = n;
+  if(hostConn && hostConn.open){
+    hostConn.send({ type:'name-change', name: myName });
+    document.getElementById('client-status').textContent = '✓ Nombre guardado: ' + myName;
+  }
+}
+
+function handleClientData(d){
+  if(d.type==='rejected'){ showErr('No se pudo unir: ' + d.reason); return; }
+  if(d.type==='welcome'){
+    myId = d.playerId; // server-assigned (nuestro peer id real)
+    myName = d.name;
+    myColor = d.color;
+    myColorIdx = d.colorIdx;
+    players = d.players;
+    document.getElementById('name-input').value = myName;
+    refreshClientList();
+  }
+  if(d.type==='players-update'){
+    players = d.players;
+    if(players[myId]){ myName=players[myId].name; myColor=players[myId].color; }
+    refreshClientList();
+  }
+  if(d.type==='start'){
+    selectedTrack = d.track;
+    players = d.players;
+    launchGame(selectedTrack, players);
+  }
+  if(d.type==='relay-state'){
+    remoteStates[d.fromId] = d.state;
+    checkMultiFinish(d.fromId, d.state);
+  }
+  if(d.type==='host-state'){
+    remoteStates[d.fromId] = d.state;
+    checkMultiFinish(d.fromId, d.state);
+  }
+  if(d.type==='podium'){
+    finishers = d.finishers;
+    if(!podiumShown) showPodium();
+  }
+  if(d.type==='back-to-lobby'){
+    resetToLobby();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// LAUNCH GAME
+// ═══════════════════════════════════════════════════════
+function launchGame(track, pls){
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('host-room').style.display='none';
+  document.getElementById('client-room').style.display='none';
+  document.getElementById('game-outer').style.display='flex';
+
+  selectedTrack = track;
+  players = pls;
+  // Asegurarse de que el host no esté en la lista de jugadores
+  if(isHost && players[myId]) delete players[myId];
+
+  resize(); scaleCanvas();
+  buildTrack(); placeObstacles();
+  particles = []; finishers = []; podiumShown = false; myFinished = false;
+
+  if(isHost){
+    // HOST = solo espectador: no inicializa carro, no controla
+    launchSpectator();
+  } else {
+    // CLIENTE = jugador completo
+    if(players[myId]){ myColor = players[myId].color; myName = players[myId].name; }
+    initCar();
+    gameRunning = true;
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+function launchSpectator(){
+  // El host ve todos los carros moviéndose pero no juega
+  // Ocultar controles e HUD de jugador, mostrar solo ranking
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('status-bar').style.display = 'none';
+
+  // Mostrar overlay de espectador
+  const ov = document.getElementById('overlay');
+  ov.style.display = 'none';
+
+  // Agrandar el ranking HUD para espectador
+  const rk = document.getElementById('ranking-hud');
+  rk.style.top = '10px';
+  rk.style.right = '10px';
+  rk.style.minWidth = '160px';
+  rk.style.fontSize = '13px';
+  rk.style.padding = '10px 14px';
+
+  // Añadir banner de espectador
+  const banner = document.createElement('div');
+  banner.id = 'spectator-banner';
+  banner.style.cssText = `position:absolute;top:10px;left:10px;background:rgba(10,10,20,0.85);
+    border:1.5px solid #f5a623;border-radius:8px;padding:6px 14px;
+    color:#f5a623;font-size:11px;font-family:'Courier New',monospace;letter-spacing:2px;z-index:15;`;
+  banner.textContent = '👁 MODO ESPECTADOR';
+  document.getElementById('canvas-wrap').appendChild(banner);
+
+  gameRunning = true;
+  requestAnimationFrame(spectatorLoop);
+}
+
+function spectatorLoop(){
+  if(!gameRunning) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawTrack();
+  drawObstacles();
+  // Dibujar todos los carros remotos
+  Object.entries(remoteStates).forEach(([pid, s])=>{
+    const p = players[pid] || { name:'?', color:'#888' };
+    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+  });
+  drawParticles();
+  updateRankingHUD();
+  requestAnimationFrame(spectatorLoop);
+}
+
+// ═══════════════════════════════════════════════════════
+// MULTIPLAYER FINISH CHECK
+// ═══════════════════════════════════════════════════════
+function checkMultiFinish(pid, state){
+  if(!gameRunning) return;
+  if(state.laps >= 3 && !finishers.find(f=>f.id===pid)){
+    const p = players[pid] || { id: pid, name: 'Jugador', color: '#888' };
+    finishers.push({ id: pid, name: p.name, color: p.color, laps: state.laps });
+    if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
+      if(isHost) broadcastToClients({ type:'podium', finishers });
+      if(!podiumShown) showPodium();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// SEND MY STATE
+// ═══════════════════════════════════════════════════════
+let stateThrottle = 0;
+function sendMyState(){
+  // El host es espectador, no tiene carro → no envía estado de carro
+  if(isHost) return;
+  const now = Date.now();
+  if(now - stateThrottle < 50) return; // ~20fps
+  stateThrottle = now;
+  const state = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished, fuel: car.fuel };
+  if(hostConn && hostConn.open){
+    hostConn.send({ type:'state-update', state });
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// PODIUM
+// ═══════════════════════════════════════════════════════
+function showPodium(){
+  if(podiumShown) return;
+  podiumShown = true;
+  gameRunning = false;
+
+  // Fill remaining spots if < 3
+  const all = Object.values(players);
+  while(finishers.length < Math.min(3, all.length)){
+    const remaining = all.filter(p=>!finishers.find(f=>f.id===p.id));
+    if(!remaining.length) break;
+    finishers.push({ id: remaining[0].id, name: remaining[0].name, color: remaining[0].color, laps: 0 });
+  }
+
+  const top3 = finishers.slice(0,3);
+  const medals = ['🥇','🥈','🥉'];
+  const order = top3.length >= 2 ? [1,0,2].slice(0, top3.length) : [0]; // 2nd left, 1st center, 3rd right
+  const posClass = ['p1','p2','p3'];
+
+  // Build podium: order is [silver, gold, bronze] visually
+  let displayOrder = [];
+  if(top3.length === 1) displayOrder = [0];
+  else if(top3.length === 2) displayOrder = [1, 0];
+  else displayOrder = [1, 0, 2];
+
+  const container = document.getElementById('podium-places');
+  container.innerHTML = '';
+  displayOrder.forEach(idx => {
+    if(!top3[idx]) return;
+    const p = top3[idx];
+    const block = document.createElement('div');
+    block.className = 'podium-block ' + posClass[idx];
+    block.innerHTML = `
+      <div class="podium-car">🏎️</div>
+      <div class="podium-nametag" style="color:${p.color};border:1.5px solid ${p.color}40;">${p.name}</div>
+      <div class="podium-base">${medals[idx]}</div>`;
+    container.appendChild(block);
+  });
+
+  document.getElementById('podium-screen').style.display='flex';
+}
+
+function backToLobby(){
+  if(isHost) broadcastToClients({ type:'back-to-lobby' });
+  resetToLobby();
+}
+
+function resetToLobby(){
+  document.getElementById('podium-screen').style.display='none';
+  document.getElementById('game-outer').style.display='none';
+  document.getElementById('host-room').style.display='none';
+  document.getElementById('client-room').style.display='none';
+  gameRunning = false;
+  if(peer){ peer.destroy(); peer = null; }
+  players = {}; remoteStates = {}; finishers = []; clientConns = {}; hostConn = null;
+  isHost = false;
+  document.getElementById('lobby').style.display='flex';
+}
+
+// ═══════════════════════════════════════════════════════
+// RANKING HUD
+// ═══════════════════════════════════════════════════════
+function updateRankingHUD(){
+  // Si es host espectador, solo usar estados remotos (no tiene carro propio)
+  const allStates = { ...remoteStates };
+  if(!isHost){
+    allStates[myId] = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished };
+  }
+
+  // Calcular progreso: laps * 1000 + avance en pista (índice más cercano)
+  const ranked = Object.entries(allStates).map(([id, s])=>{
+    const cp = closestPointOnTrack(s.x, s.y);
+    const progress = (s.laps || 0) * 10000 + cp.idx;
+    const p = players[id] || { name: id.substring(0,6), color: '#888' };
+    return { id, name: p.name, color: p.color, laps: s.laps||0, progress, finished: s.finished };
+  }).sort((a,b)=> b.progress - a.progress);
+
+  const rows = document.getElementById('ranking-rows');
+  rows.innerHTML = '';
+  ranked.slice(0, 8).forEach((p, i)=>{
+    const row = document.createElement('div');
+    // El host no se marca a sí mismo como "me" en el ranking
+    row.className = 'rk-row' + (!isHost && p.id===myId?' me':'') + (p.finished?' finished':'');
+    row.innerHTML = `<span class="rk-pos">${i+1}</span>
+      <div class="rk-dot" style="background:${p.color}"></div>
+      <span class="rk-name">${p.name}</span>
+      <span class="rk-laps">${p.laps}/3</span>`;
+    rows.appendChild(row);
+  });
+
+  // Update my position badge (solo aplica a jugadores, no al host)
+  if(!isHost){
+    const myRank = ranked.findIndex(p=>p.id===myId);
+    document.getElementById('my-pos').textContent = myRank>=0 ? (myRank+1)+'°' : '-';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// CANVAS + PISTA
+// ═══════════════════════════════════════════════════════
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+
+const CANVAS_W = 820, CANVAS_H = 430;
+function resize(){ canvas.width = CANVAS_W; canvas.height = CANVAS_H; }
+resize();
+
+function scaleCanvas(){
+  const scale = Math.min(window.innerWidth / 820, 1);
+  const sw = document.getElementById('canvas-scale-wrap');
+  sw.style.height = Math.round(430*scale)+'px';
+  wrap.style.transform = 'scale('+scale+')';
+  wrap.style.transformOrigin = 'top left';
+}
+scaleCanvas();
+window.addEventListener('resize', scaleCanvas);
+
+let trackPath = [], trackWidth = 34;
+
+function getWaypoints1(W,H){
+  return [
+    [0.22,0.82],[0.36,0.82],[0.50,0.82],[0.64,0.82],
+    [0.78,0.82],[0.88,0.76],[0.92,0.66],[0.90,0.56],
+    [0.84,0.48],[0.74,0.44],[0.78,0.34],[0.88,0.28],
+    [0.92,0.20],[0.88,0.12],[0.78,0.08],[0.66,0.10],
+    [0.54,0.08],[0.40,0.08],[0.28,0.10],
+    [0.16,0.12],[0.10,0.20],[0.12,0.30],
+    [0.18,0.38],[0.28,0.42],[0.24,0.52],[0.14,0.58],
+    [0.08,0.66],[0.10,0.76],[0.16,0.82],[0.22,0.82],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+function getWaypoints2(W,H){
+  return [
+    [0.72,0.08],[0.58,0.08],[0.46,0.08],
+    [0.36,0.08],[0.28,0.10],[0.22,0.18],[0.22,0.28],
+    [0.24,0.36],[0.32,0.42],[0.38,0.50],[0.32,0.58],
+    [0.24,0.64],[0.18,0.72],[0.22,0.82],[0.30,0.88],
+    [0.42,0.90],[0.55,0.90],[0.68,0.88],
+    [0.78,0.84],[0.84,0.76],[0.82,0.66],
+    [0.76,0.58],[0.68,0.52],[0.74,0.44],[0.82,0.38],
+    [0.88,0.30],[0.90,0.22],[0.86,0.14],[0.78,0.08],[0.72,0.08],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+function getWaypoints3(W,H){
+  return [
+    [0.08,0.11],[0.22,0.11],[0.38,0.11],[0.54,0.11],[0.70,0.11],
+    [0.84,0.11],[0.91,0.17],[0.91,0.26],
+    [0.91,0.38],[0.91,0.52],[0.91,0.64],
+    [0.91,0.74],[0.87,0.82],[0.78,0.86],[0.68,0.86],[0.60,0.82],[0.57,0.74],
+    [0.57,0.62],[0.57,0.50],[0.57,0.38],
+    [0.57,0.26],[0.53,0.18],[0.46,0.14],[0.38,0.17],[0.35,0.26],
+    [0.35,0.38],[0.35,0.50],[0.35,0.62],[0.35,0.74],
+    [0.35,0.82],[0.29,0.88],[0.20,0.90],[0.12,0.87],[0.08,0.80],[0.08,0.70],
+    [0.08,0.58],[0.08,0.44],[0.08,0.30],[0.08,0.11],
+  ].map(([px,py])=>[px*W,py*H]);
+}
+
+function getWaypoints(W,H){
+  if(selectedTrack===1) return getWaypoints1(W,H);
+  if(selectedTrack===2) return getWaypoints2(W,H);
+  return getWaypoints3(W,H);
+}
+
+function catmullRom(pts, steps){
+  let result=[],n=pts.length;
+  for(let i=0;i<n-1;i++){
+    let p0=pts[Math.max(i-1,0)],p1=pts[i],p2=pts[i+1],p3=pts[Math.min(i+2,n-1)];
+    for(let s=0;s<steps;s++){
+      let t=s/steps,t2=t*t,t3=t2*t;
+      let x=0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+      let y=0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+      result.push([x,y]);
+    }
+  }
+  return result;
+}
+
+function buildTrack(){ trackPath = catmullRom(getWaypoints(CANVAS_W, CANVAS_H), 12); }
+
+function closestPointOnTrack(x,y){
+  let minD=Infinity,minI=0;
+  for(let i=0;i<trackPath.length;i++){
+    let dx=x-trackPath[i][0],dy=y-trackPath[i][1],d=dx*dx+dy*dy;
+    if(d<minD){minD=d;minI=i;}
+  }
+  return {idx:minI,dist:Math.sqrt(minD)};
+}
+function isOnTrack(x,y){ return closestPointOnTrack(x,y).dist<trackWidth*0.92; }
+function getTrackDir(i){
+  let n=trackPath.length,a=trackPath[(i-1+n)%n],b=trackPath[(i+1)%n];
+  let dx=b[0]-a[0],dy=b[1]-a[1],len=Math.sqrt(dx*dx+dy*dy)||1;
+  return [dx/len,dy/len];
+}
+
+// ─── DRAW TRACK ───────────────────────────────────────
+function drawTrack(){
+  let W=canvas.width,H=canvas.height;
+  ctx.fillStyle='#2d5a27'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#336b2d';
+  for(let gx=0;gx<W;gx+=14){
+    for(let gy=0;gy<H;gy+=14){
+      let jx=((gx*7+gy*3)%11)-5, jy=((gy*5+gx*11)%9)-4;
+      ctx.fillRect(gx+jx,gy+jy,2,3);
+    }
+  }
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,0.7)'; ctx.shadowBlur=14; ctx.shadowOffsetY=3;
+  ctx.lineWidth=trackWidth*2+14; ctx.strokeStyle='rgba(0,0,0,0.4)';
+  ctx.lineCap='round'; ctx.lineJoin='round'; _strokePath(); ctx.restore();
+  _drawCurbing(trackWidth*2+10, 5);
+  ctx.save(); ctx.lineWidth=trackWidth*2; ctx.strokeStyle='#3a3a4a';
+  ctx.lineCap='round'; ctx.lineJoin='round'; _strokePath(); ctx.restore();
+  ctx.save(); ctx.lineWidth=trackWidth*2-6; ctx.strokeStyle='#505068';
+  ctx.lineCap='round'; ctx.lineJoin='round'; _strokePath(); ctx.restore();
+  ctx.save(); ctx.lineWidth=trackWidth*2-10; ctx.strokeStyle='#3a3a52';
+  ctx.lineCap='round'; ctx.lineJoin='round'; _strokePath(); ctx.restore();
+  drawCenterDashes(); drawDirectionArrows(); drawFinishLine();
+}
+
+function _strokePath(){
+  ctx.beginPath();
+  ctx.moveTo(trackPath[0][0],trackPath[0][1]);
+  for(let i=1;i<trackPath.length;i++) ctx.lineTo(trackPath[i][0],trackPath[i][1]);
+  ctx.closePath(); ctx.stroke();
+}
+
+function _drawCurbing(totalW, stripeLen){
+  let n=trackPath.length;
+  for(let i=0;i<n;i+=stripeLen){
+    let end=Math.min(i+stripeLen,n-1);
+    let color=(Math.floor(i/stripeLen)%2===0)?'#dd2222':'#ffffff';
+    let dir=getTrackDir(i), nx=-dir[1], ny=dir[0], hw=totalW/2;
+    ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=5; ctx.lineCap='butt';
+    ctx.beginPath();
+    for(let j=i;j<=end&&j<n;j++){
+      let d2=getTrackDir(j),nx2=-d2[1],ny2=d2[0];
+      let px=trackPath[j][0]+nx2*hw,py=trackPath[j][1]+ny2*hw;
+      if(j===i) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for(let j=i;j<=end&&j<n;j++){
+      let d2=getTrackDir(j),nx2=-d2[1],ny2=d2[0];
+      let px=trackPath[j][0]-nx2*hw,py=trackPath[j][1]-ny2*hw;
+      if(j===i) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+function drawCenterDashes(){
+  let n=trackPath.length,segLen=18,gap=14;
+  for(let i=0;i<n;i+=segLen+gap){
+    let end=Math.min(i+segLen,n);
+    ctx.save(); ctx.strokeStyle='#ffffff55'; ctx.lineWidth=1.5; ctx.lineCap='round';
+    ctx.beginPath();
+    for(let j=i;j<end&&j<n;j++){
+      if(j===i) ctx.moveTo(trackPath[j][0],trackPath[j][1]);
+      else ctx.lineTo(trackPath[j][0],trackPath[j][1]);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+function drawDirectionArrows(){
+  let n=trackPath.length, spacing=Math.max(20,Math.floor(n/16));
+  for(let i=spacing;i<n;i+=spacing){
+    let dir=getTrackDir(i),p=trackPath[i];
+    drawArrow(p[0],p[1],dir[0],dir[1]);
+  }
+}
+
+function drawArrow(x,y,dx,dy){
+  let size=9, angle=Math.atan2(dy,dx);
+  ctx.save(); ctx.translate(x,y); ctx.rotate(angle); ctx.globalAlpha=0.75;
+  ctx.beginPath();
+  ctx.moveTo(-size,-size*0.4); ctx.lineTo(0,-size*0.4); ctx.lineTo(0,-size*0.8);
+  ctx.lineTo(size,0); ctx.lineTo(0,size*0.8); ctx.lineTo(0,size*0.4); ctx.lineTo(-size,size*0.4);
+  ctx.closePath();
+  ctx.fillStyle='#ffffffcc'; ctx.shadowColor='#000'; ctx.shadowBlur=4; ctx.fill();
+  ctx.globalAlpha=1; ctx.restore();
+}
+
+function drawFinishLine(){
+  let si=4, p=trackPath[si], dir=getTrackDir(si);
+  let nx=-dir[1],ny=dir[0],hw=trackWidth,cols=8;
+  ctx.save();
+  for(let r=0;r<3;r++) for(let c=0;c<cols;c++){
+    let t=(c/cols)*2-1;
+    let bx=p[0]+nx*t*hw+dir[0]*r*6-dir[0]*9;
+    let by=p[1]+ny*t*hw+dir[1]*r*6-dir[1]*9;
+    ctx.fillStyle=(r+c)%2===0?'#fff':'#111';
+    ctx.fillRect(bx-4,by-3,(hw*2/cols)-1,5);
+  }
+  ctx.restore();
+}
+
+// ─── OBSTACLES ────────────────────────────────────────
+const OBSTACLE_POSITIONS = {
+  1:[[0.08,0.45],[0.15,-0.50],[0.24,0.50],[0.32,-0.50],[0.40,0.50],[0.50,-0.45],[0.62,0.50],[0.72,-0.50],[0.82,0.50],[0.92,-0.45]],
+  2:[[0.08,0.45],[0.17,-0.50],[0.27,0.45],[0.36,-0.45],[0.47,0.50],[0.57,-0.40],[0.66,0.45],[0.76,-0.50],[0.88,0.45]],
+  3:[[0.08,0.45],[0.14,-0.50],[0.22,0.45],[0.32,-0.50],[0.38,0.55],[0.46,-0.45],[0.55,0.50],[0.64,-0.45],[0.74,0.55],[0.88,-0.45]],
+};
+
+let obstacles=[];
+function placeObstacles(){
+  obstacles=[];
+  let n=trackPath.length;
+  let positions=OBSTACLE_POSITIONS[selectedTrack]||OBSTACLE_POSITIONS[1];
+  positions.forEach(([frac,lat])=>{
+    let idx=Math.max(0,Math.min(n-1,Math.floor(frac*n)));
+    let dir=getTrackDir(idx),nx=-dir[1],ny=dir[0],off=lat*trackWidth*0.72;
+    obstacles.push({ x:trackPath[idx][0]+nx*off, y:trackPath[idx][1]+ny*off, r:12, cooldown:0 });
+  });
+}
+
+function drawSkull(x,y,r,alpha){
+  ctx.save(); ctx.globalAlpha=alpha||1; ctx.translate(x,y);
+  ctx.shadowColor='#ff0000'; ctx.shadowBlur=14;
+  ctx.fillStyle='#cc0000';
+  ctx.beginPath(); ctx.arc(0,-r*0.12,r*0.68,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(-r*0.52,-r*0.12,r*1.04,r*0.55);
+  ctx.fillStyle='#991111'; ctx.beginPath(); ctx.arc(0,r*0.33,r*0.4,0,Math.PI); ctx.fill();
+  ctx.shadowBlur=0; ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.08,r*0.2,r*0.23,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(-r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.27,-r*0.07,r*0.11,r*0.13,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#880000';
+  ctx.beginPath(); ctx.moveTo(-r*0.1,r*0.17); ctx.lineTo(r*0.1,r*0.17); ctx.lineTo(0,r*0.04); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#fff';
+  [-r*0.26,0,r*0.26].forEach(tx=>{ ctx.fillRect(tx-r*0.09,r*0.26,r*0.16,r*0.2); });
+  ctx.restore();
+}
+
+function drawObstacles(){
+  let now=Date.now();
+  obstacles.forEach(o=>{ let a=now<o.cooldown?0.25:1; drawSkull(o.x,o.y,o.r,a); });
+}
+
+// ─── PARTICLES ────────────────────────────────────────
+let particles=[];
+function spawnHit(x,y){ for(let i=0;i<14;i++) particles.push({x,y,r:3+Math.random()*4,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,color:'#ff3333',life:28}); }
+function spawnStars(x,y){ for(let i=0;i<10;i++) particles.push({x,y,r:2+Math.random()*3,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,color:'#ffe000',life:32}); }
+function drawParticles(){
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{ ctx.globalAlpha=p.life/32; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill(); p.x+=p.vx; p.y+=p.vy; p.life--; });
+  ctx.globalAlpha=1;
+}
+
+// ─── CAR ──────────────────────────────────────────────
+let car={x:0,y:0,angle:0,speed:0,fuel:100,laps:0,score:0,stunEnd:0,spinVel:0};
+let keys={up:false,left:false,right:false};
+let gameRunning=false,triviaActive=false,pitsActive=false;
+let lapCrossed=false,qUsed=[];
+let wrongAnswerCooldownEnd=0;
+
+function initCar(){
+  let si=4;
+  car.x=trackPath[si][0]; car.y=trackPath[si][1];
+  let dir=getTrackDir(si);
+  car.angle=Math.atan2(dir[1],dir[0]);
+  car.speed=0; car.fuel=100; car.laps=0; car.score=0;
+  car.stunEnd=0; car.spinVel=0;
+  lapCrossed=false; triviaActive=false; pitsActive=false; qUsed=[];
+  wrongAnswerCooldownEnd=0; myFinished=false;
+}
+
+function drawCar(x,y,angle,color,alpha,showFuel){
+  ctx.save(); ctx.globalAlpha=alpha; ctx.translate(x,y); ctx.rotate(angle+Math.PI/2);
+  ctx.shadowColor=color; ctx.shadowBlur=alpha>0.6?12:0;
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.roundRect(-7,-13,14,26,3); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#ffffff44'; ctx.fillRect(-5,-11,10,8);
+  ctx.fillStyle='#ffe000';
+  ctx.fillRect(-8,11,5,3); ctx.fillRect(3,11,5,3);
+  if(showFuel && car.fuel<=30){
+    ctx.fillStyle='#f5a623'; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText('⛽',0,-20);
+  }
+  ctx.restore();
+}
+
+// Draw a remote car with name label
+function drawRemoteCar(x, y, angle, color, name){
+  drawCar(x, y, angle, color, 0.45, false);
+  // Name label
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = color;
+  ctx.fillText(name, x, y - 18);
+  ctx.restore();
+}
+
+function updateCar(){
+  if(triviaActive||pitsActive) return;
+  let now=Date.now();
+  let stunned=now<car.stunEnd;
+  if(stunned){ car.angle+=car.spinVel; car.spinVel*=0.92; car.speed*=0.85; return; }
+  const TURN=0.052,ACCEL=0.13,FRIC=0.96,MAX=5.2;
+  if(keys.left) car.angle-=TURN;
+  if(keys.right) car.angle+=TURN;
+  if(keys.up&&car.fuel>0) car.speed=Math.min(car.speed+ACCEL,MAX);
+  car.speed*=FRIC;
+  if(Math.abs(car.speed)<0.05) car.speed=0;
+  let nx=car.x+Math.cos(car.angle)*car.speed;
+  let ny=car.y+Math.sin(car.angle)*car.speed;
+  let cp=closestPointOnTrack(nx,ny);
+  if(cp.dist<trackWidth*0.92){car.x=nx;car.y=ny;}
+  else{
+    let tp=trackPath[cp.idx];
+    let pushX=tp[0]-car.x,pushY=tp[1]-car.y;
+    let len=Math.sqrt(pushX*pushX+pushY*pushY)||1;
+    car.x+=pushX/len*1.5; car.y+=pushY/len*1.5; car.speed*=0.7;
+  }
+  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.055);
+  let margin=14;
+  if(car.y<margin){car.y=margin; if(car.speed>0)car.speed*=0.5;}
+  if(car.y>canvas.height-margin){car.y=canvas.height-margin; if(car.speed>0)car.speed*=0.5;}
+  if(car.x<margin){car.x=margin; if(car.speed>0)car.speed*=0.5;}
+  if(car.x>canvas.width-margin){car.x=canvas.width-margin; if(car.speed>0)car.speed*=0.5;}
+  if(car.fuel<=0&&!pitsActive){car.fuel=0; showPits(); return;}
+
+  obstacles.forEach(o=>{
+    if(Date.now()<o.cooldown) return;
+    let dx=car.x-o.x,dy=car.y-o.y;
+    if(Math.sqrt(dx*dx+dy*dy)<o.r+9){
+      o.cooldown=Date.now()+3500; car.stunEnd=Date.now()+1200;
+      car.spinVel=(Math.random()>0.5?1:-1)*0.18;
+      car.speed=-1.5; car.fuel=Math.max(0,car.fuel-10); spawnHit(car.x,car.y);
+    }
+  });
+
+  // Lap detection
+  let sp=trackPath[4];
+  let dist=Math.sqrt((car.x-sp[0])**2+(car.y-sp[1])**2);
+  if(!lapCrossed&&dist<32&&car.speed>0.5){
+    lapCrossed=true; car.laps++; car.score+=50;
+    if(car.laps>=3 && !myFinished){
+      myFinished=true;
+      const p = players[myId] || {name: myName, color: myColor};
+      finishers.push({ id: myId, name: p.name, color: p.color, laps: 3 });
+      if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
+        if(isHost) broadcastToClients({ type:'podium', finishers });
+        if(!podiumShown) showPodium();
+      }
+    }
+  }
+  if(dist>65) lapCrossed=false;
+}
+
+// ─── PITS ─────────────────────────────────────────────
+let pitsTimer=null;
+function showPits(){
+  pitsActive=true; car.speed=0;
+  document.getElementById('pits-panel').style.display='flex';
+  document.getElementById('pits-bar').style.width='0%';
+  let duration=4000,start=Date.now();
+  let msgs=['El equipo está arreglando el carro...','Cambiando llantas...','Revisando el motor...','Llenando medio tanque...'];
+  let mi=0; document.getElementById('pits-msg').textContent=msgs[0];
+  function tick(){
+    let elapsed=Date.now()-start,pct=Math.min(elapsed/duration*100,100);
+    document.getElementById('pits-bar').style.width=pct+'%';
+    let newMi=Math.floor((elapsed/duration)*msgs.length);
+    if(newMi!==mi&&newMi<msgs.length){mi=newMi;document.getElementById('pits-msg').textContent=msgs[mi];}
+    let remaining=Math.max(0,Math.ceil((duration-elapsed)/1000));
+    document.getElementById('pits-countdown').textContent=remaining>0?remaining+'s':'¡Listo!';
+    if(elapsed<duration){pitsTimer=setTimeout(tick,80);} else{closePits();}
+  }
+  tick();
+}
+function closePits(){ car.fuel=50; document.getElementById('pits-panel').style.display='none'; pitsActive=false; }
+
+// ─── HUD ──────────────────────────────────────────────
+function updateHUD(){
+  document.getElementById('laps').textContent=car.laps+'/3';
+  document.getElementById('spd').textContent=Math.round(Math.abs(car.speed)*10);
+  let f=Math.round(car.fuel);
+  document.getElementById('fuel-num').textContent=f;
+  document.getElementById('fuel-bar').style.width=f+'%';
+  document.getElementById('fuel-bar').style.background=f>50?'#00c896':f>25?'#f5a623':'#e94560';
+  let now=Date.now(), COOLDOWN_MS=10000;
+  let fuelBtn=document.getElementById('fuel-btn');
+  let cdFill=document.getElementById('cd-fill');
+  let btnLabel=document.getElementById('fuel-btn-label');
+  let inWrongCooldown=now<wrongAnswerCooldownEnd;
+  if(triviaActive||pitsActive||car.fuel>30||now<car.stunEnd){
+    fuelBtn.disabled=true; fuelBtn.classList.remove('cooling');
+    cdFill.style.width='0%'; btnLabel.textContent='⛽ COMBUSTIBLE';
+  } else if(inWrongCooldown){
+    let pct=Math.min((COOLDOWN_MS-(wrongAnswerCooldownEnd-now))/COOLDOWN_MS*100,100);
+    let remaining=Math.ceil((wrongAnswerCooldownEnd-now)/1000);
+    fuelBtn.disabled=true; fuelBtn.classList.add('cooling');
+    cdFill.style.width=pct+'%'; btnLabel.textContent='⛽ '+remaining+'s...';
+  } else {
+    fuelBtn.disabled=false; fuelBtn.classList.remove('cooling');
+    cdFill.style.width='0%'; btnLabel.textContent='⛽ COMBUSTIBLE';
+  }
+  document.getElementById('status-msg').textContent='';
+}
+
+// ─── TRIVIA ───────────────────────────────────────────
+const QUESTIONS=[
+  {q:"¿Cuál es la capital de Francia?",opts:["Madrid","París","Roma","Berlín"],ans:1},
+  {q:"¿Cuántos lados tiene un hexágono?",opts:["5","6","7","8"],ans:1},
+  {q:"¿Cuál planeta es el más grande del sistema solar?",opts:["Saturno","Marte","Júpiter","Neptuno"],ans:2},
+  {q:"¿En qué año llegó el hombre a la luna?",opts:["1965","1969","1972","1980"],ans:1},
+  {q:"¿Cuál es el símbolo químico del oro?",opts:["Go","Ag","Au","Fe"],ans:2},
+  {q:"¿Cuántos continentes hay en la Tierra?",opts:["5","6","7","8"],ans:2},
+  {q:"¿Quién pintó la Mona Lisa?",opts:["Picasso","Da Vinci","Monet","Rembrandt"],ans:1},
+  {q:"¿Cuál es el animal terrestre más rápido?",opts:["León","Guepardo","Caballo","Tigre"],ans:1},
+];
+const WIN_PHRASES=["¡Eso sí que es cerebro de piloto! 🧠","¡Correcto! El tanque te lo ganaste. 🔥","¡Exacto! ¡Ni Google lo diría mejor! 🎯","¡Boom! Sabías esa con los ojos cerrados. ⚡","¡Genio al volante! Combustible recargado. 🏁"];
+const LOSE_PHRASES=["¡Casi! Pero el tanque sigue igual.","Fallaste — el combustible no perdona.","No era esa... sigue manejando con cuidado.","¡Uy! Respuesta incorrecta. Nivel de gasolina sin cambios."];
+
+function getQuestion(){
+  if(qUsed.length>=QUESTIONS.length) qUsed=[];
+  let avail=QUESTIONS.map((_,i)=>i).filter(i=>!qUsed.includes(i));
+  let pick=avail[Math.floor(Math.random()*avail.length)];
+  qUsed.push(pick); return QUESTIONS[pick];
+}
+
+function requestFuel(){
+  if(triviaActive||pitsActive||car.fuel>30||Date.now()<car.stunEnd) return;
+  if(Date.now()<wrongAnswerCooldownEnd) return;
+  triviaActive=true;
+  let q=getQuestion();
+  document.getElementById('trivia-question').textContent=q.q;
+  let ow=document.getElementById('opts-wrap'); ow.innerHTML='';
+  document.getElementById('trivia-result').textContent='';
+  q.opts.forEach((o,i)=>{
+    let b=document.createElement('button'); b.className='opt-btn'; b.textContent=o;
+    b.onclick=()=>answerQ(i,q.ans,b); ow.appendChild(b);
+  });
+  document.getElementById('trivia-panel').style.display='flex';
+}
+
+function answerQ(chosen,correct,btn){
+  document.querySelectorAll('.opt-btn').forEach(b=>b.onclick=null);
+  let corrBtn=document.querySelectorAll('.opt-btn')[correct];
+  let res=document.getElementById('trivia-result');
+  if(chosen===correct){
+    btn.classList.add('correct'); res.style.color='#00c896';
+    res.textContent=WIN_PHRASES[Math.floor(Math.random()*WIN_PHRASES.length)];
+    car.fuel=Math.min(100,car.fuel+30); car.score+=25; spawnStars(car.x,car.y);
+  } else {
+    btn.classList.add('wrong'); corrBtn.classList.add('correct');
+    res.style.color='#e94560';
+    res.textContent=LOSE_PHRASES[Math.floor(Math.random()*LOSE_PHRASES.length)];
+    wrongAnswerCooldownEnd=Date.now()+10000;
+  }
+  setTimeout(closeTrivia,2000);
+}
+
+function closeTrivia(){ document.getElementById('trivia-panel').style.display='none'; triviaActive=false; }
+
+// ─── GAME LOOP ────────────────────────────────────────
+function gameLoop(){
+  if(!gameRunning) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawTrack();
+  drawObstacles();
+
+  // Draw remote cars (semi-transparent, behind my car)
+  Object.entries(remoteStates).forEach(([pid, s])=>{
+    if(pid === myId) return;
+    const p = players[pid] || { name: '?', color: '#888' };
+    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+  });
+
+  drawParticles();
+  drawCar(car.x, car.y, car.angle, myColor, 1, true);
+  updateCar();
+  sendMyState();
+  updateHUD();
+  updateRankingHUD();
+  requestAnimationFrame(gameLoop);
+}
+
+// ─── KEYBOARD ─────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=true;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=true;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=true;
+  if(e.key===' '){e.preventDefault();requestFuel();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=false;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=false;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=false;
+});
+
+// ─── MOBILE CONTROLS ──────────────────────────────────
+(function(){
+  function bindBtn(el,keyName){
+    el.addEventListener('touchstart',e=>{e.preventDefault();keys[keyName]=true;el.classList.add('pressed');},{passive:false});
+    el.addEventListener('touchend',e=>{e.preventDefault();keys[keyName]=false;el.classList.remove('pressed');},{passive:false});
+    el.addEventListener('touchcancel',e=>{keys[keyName]=false;el.classList.remove('pressed');},{passive:false});
+    el.addEventListener('mousedown',()=>{keys[keyName]=true;el.classList.add('pressed');});
+    el.addEventListener('mouseup',()=>{keys[keyName]=false;el.classList.remove('pressed');});
+    el.addEventListener('mouseleave',()=>{keys[keyName]=false;el.classList.remove('pressed');});
+  }
+  bindBtn(document.getElementById('btn-left'),'left');
+  bindBtn(document.getElementById('btn-right'),'right');
+  bindBtn(document.getElementById('pedal-btn'),'up');
+})();
+
+// Set isHost flag based on flow
+// (isHost is set true inside showHostRoom context)
+</script>
+</body>
+</html>
