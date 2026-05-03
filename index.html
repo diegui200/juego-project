@@ -3,14 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v15 — Multijugador</title>
+<title>Trivia Racer v16 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; font-family: 'Courier New', monospace; }
+html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; font-family: 'Courier New', monospace; overflow-x: hidden; }
 
 /* ── WRAPPER ── */
 #game-outer { width: 100%; max-width: 840px; display: flex; flex-direction: column; background: #1a1a2e; border-radius: 12px; overflow: hidden; }
+#game-wrap { display: flex; flex-direction: column; }
 
 /* ── LOBBY ── */
 #lobby {
@@ -163,7 +164,7 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 
 /* ── CANVAS ── */
 #canvas-wrap { position: relative; width: 820px; height: 430px; }
-#canvas-scale-wrap { width: 100%; overflow: hidden; display: flex; justify-content: center; background: #1a1a2e; }
+#canvas-scale-wrap { width: 100%; overflow: hidden; display: flex; justify-content: center; background: #1a1a2e; flex-shrink: 1; }
 canvas { display: block; width: 820px; height: 430px; }
 
 /* ── OVERLAYS ── */
@@ -190,11 +191,11 @@ canvas { display: block; width: 820px; height: 430px; }
 #pits-bar { height: 100%; width: 0%; background: #f5a623; border-radius: 5px; transition: width 0.1s; }
 
 /* ── CONTROLES ── */
-#controls { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px; }
-#dir-wrap { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+#controls { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #0f0f1a; border-top: 1px solid #222; gap: 6px; flex-shrink: 0; }
+#dir-wrap { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
 .dir-btn {
-  width: 72px; height: 72px; border-radius: 14px; background: #1e1e30;
-  border: 2.5px solid #555; color: #fff; font-size: 28px;
+  width: 64px; height: 64px; border-radius: 14px; background: #1e1e30;
+  border: 2.5px solid #555; color: #fff; font-size: 24px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; user-select: none; -webkit-user-select: none;
   touch-action: none; box-shadow: 0 4px 0 #0a0a18;
@@ -202,11 +203,11 @@ canvas { display: block; width: 820px; height: 430px; }
   -webkit-tap-highlight-color: transparent;
 }
 .dir-btn:active, .dir-btn.pressed { background: #e94560; border-color: #e94560; transform: translateY(3px); box-shadow: 0 1px 0 #0a0a18; }
-#fuel-center { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+#fuel-center { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
 #fuel-btn {
-  background: #f5a623; border: none; color: #000; padding: 11px 14px; font-size: 11px;
+  background: #f5a623; border: none; color: #000; padding: 9px 12px; font-size: 10px;
   font-weight: bold; border-radius: 10px; cursor: pointer; font-family: 'Courier New', monospace;
-  letter-spacing: 1px; position: relative; overflow: hidden; min-width: 100px;
+  letter-spacing: 1px; position: relative; overflow: hidden; min-width: 90px;
   touch-action: manipulation; -webkit-tap-highlight-color: transparent;
 }
 #fuel-btn:disabled { background: #555; color: #999; cursor: not-allowed; }
@@ -216,15 +217,21 @@ canvas { display: block; width: 820px; height: 430px; }
 #pc-hint { color: #444; font-size: 9px; text-align: center; }
 #pedal-wrap { flex-shrink: 0; }
 #pedal-btn {
-  width: 72px; height: 72px; border-radius: 50%;
+  width: 64px; height: 64px; border-radius: 50%;
   background: radial-gradient(circle at 40% 35%, #3a3, #1a4a1a);
-  border: 3px solid #2a6a2a; color: #fff; font-size: 24px;
+  border: 3px solid #2a6a2a; color: #fff; font-size: 22px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; user-select: none; -webkit-user-select: none;
   touch-action: none; box-shadow: 0 4px 0 #0a2a0a;
   transition: transform .05s, box-shadow .05s; -webkit-tap-highlight-color: transparent;
 }
 #pedal-btn:active, #pedal-btn.pressed { transform: translateY(3px); box-shadow: 0 1px 0 #0a2a0a; background: radial-gradient(circle at 40% 35%, #5c5, #2a6a2a); }
+@media (max-width: 480px) {
+  .dir-btn { width: 56px; height: 56px; font-size: 20px; }
+  #pedal-btn { width: 56px; height: 56px; font-size: 18px; }
+  #fuel-btn { padding: 7px 8px; font-size: 9px; min-width: 76px; }
+  #controls { padding: 4px 8px; gap: 4px; }
+}
 
 /* ── ERROR TOAST ── */
 #err-toast {
@@ -895,7 +902,12 @@ function resize(){ canvas.width = CANVAS_W; canvas.height = CANVAS_H; }
 resize();
 
 function scaleCanvas(){
-  const scale = Math.min(window.innerWidth / 820, 1);
+  // HUD ~42px, status-bar ~18px, controls ~76px (mobile ~68px) = ~136px reserved
+  const reserved = 140;
+  const maxH = window.innerHeight - reserved;
+  const scaleW = window.innerWidth / 820;
+  const scaleH = maxH / 430;
+  const scale = Math.min(scaleW, scaleH, 1);
   const sw = document.getElementById('canvas-scale-wrap');
   sw.style.height = Math.round(430*scale)+'px';
   wrap.style.transform = 'scale('+scale+')';
