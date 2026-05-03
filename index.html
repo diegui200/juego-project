@@ -438,6 +438,25 @@ function refreshClientList(){
 }
 
 // ═══════════════════════════════════════════════════════
+// SEÑALIZACIÓN — usamos peerjs-server público con peer ID
+// predefinido = "triviaracer-" + código. Así el código
+// corto mapea directamente a un peer ID válido sin necesitar
+// ningún servidor externo de lookup.
+// ═══════════════════════════════════════════════════════
+
+function genCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for(let i=0;i<6;i++) c += chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+
+function codeToHostPeerId(code){
+  // Prefijo fijo + código para crear un peer ID único y reproducible
+  return 'triviaracer-host-' + code.toLowerCase();
+}
+
+// ═══════════════════════════════════════════════════════
 // HOST FLOW
 // ═══════════════════════════════════════════════════════
 function showHostRoom(){
@@ -445,11 +464,13 @@ function showHostRoom(){
   document.getElementById('host-room').style.display='flex';
   document.getElementById('room-code').textContent = 'Conectando...';
 
-  peer = new Peer({ debug: 0 });
+  roomCode = genCode();
+  const hostPeerId = codeToHostPeerId(roomCode);
+
+  // Creamos el peer con ID predefinido = triviaracer-host-XXXXXX
+  peer = new Peer(hostPeerId, { debug: 0 });
   peer.on('open', id => {
     myId = id;
-    // Usamos los primeros 6 chars del peer ID como código de sala (mayúsculas)
-    roomCode = id.substring(0,6).toUpperCase();
     document.getElementById('room-code').textContent = roomCode;
 
     myName = 'HOST';
@@ -459,39 +480,55 @@ function showHostRoom(){
     refreshHostList();
   });
 
-  peer.on('connection', conn => {
-    const pid = conn.peer;
-    conn.on('open', ()=>{
-      maxPlayers = parseInt(document.getElementById('max-players-sel').value);
-      if(Object.keys(clientConns).length >= maxPlayers - 1){
-        conn.send({ type:'rejected', reason:'Sala llena' });
-        conn.close(); return;
-      }
-      clientConns[pid] = conn;
-      // Asignar color
-      const usedIdx = Object.values(players).map(p=>p.colorIdx);
-      let ci = 1; while(usedIdx.includes(ci)) ci++;
-      players[pid] = { id: pid, name: randomName(), color: CAR_COLORS[ci%CAR_COLORS.length], colorIdx: ci };
-
-      // Enviar bienvenida
-      conn.send({ type:'welcome', playerId: pid, name: players[pid].name,
-                  color: players[pid].color, colorIdx: ci, players: players });
-      // Broadcast a todos
-      broadcastToClients({ type:'players-update', players });
-      refreshHostList();
-    });
-
-    conn.on('data', d => handleHostData(pid, d));
-    conn.on('close', ()=>{
-      delete clientConns[pid];
-      delete players[pid];
-      delete remoteStates[pid];
-      broadcastToClients({ type:'players-update', players });
-      refreshHostList();
-    });
+  peer.on('error', e => {
+    if(e.type === 'unavailable-id'){
+      // El código ya está en uso — genera otro
+      peer.destroy();
+      roomCode = genCode();
+      const newId = codeToHostPeerId(roomCode);
+      peer = new Peer(newId, { debug: 0 });
+      peer.on('open', id => {
+        myId = id;
+        document.getElementById('room-code').textContent = roomCode;
+        myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
+        players[myId] = { id: myId, name: myName, color: myColor, colorIdx: myColorIdx };
+        refreshHostList();
+      });
+      peer.on('connection', onHostConnection);
+      peer.on('error', e2 => showErr('Error PeerJS: ' + e2.type));
+    } else {
+      showErr('Error PeerJS: ' + e.type);
+    }
   });
 
-  peer.on('error', e => showErr('Error PeerJS: ' + e.type));
+  peer.on('connection', onHostConnection);
+}
+
+function onHostConnection(conn){
+  const pid = conn.peer;
+  conn.on('open', ()=>{
+    maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+    if(Object.keys(clientConns).length >= maxPlayers - 1){
+      conn.send({ type:'rejected', reason:'Sala llena' });
+      conn.close(); return;
+    }
+    clientConns[pid] = conn;
+    const usedIdx = Object.values(players).map(p=>p.colorIdx);
+    let ci = 1; while(usedIdx.includes(ci)) ci++;
+    players[pid] = { id: pid, name: randomName(), color: CAR_COLORS[ci%CAR_COLORS.length], colorIdx: ci };
+    conn.send({ type:'welcome', playerId: pid, name: players[pid].name,
+                color: players[pid].color, colorIdx: ci, players: players });
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
+  });
+  conn.on('data', d => handleHostData(pid, d));
+  conn.on('close', ()=>{
+    delete clientConns[pid];
+    delete players[pid];
+    delete remoteStates[pid];
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
+  });
 }
 
 function broadcastToClients(msg){
@@ -526,29 +563,29 @@ function hostStartGame(){
 // ═══════════════════════════════════════════════════════
 // CLIENT FLOW
 // ═══════════════════════════════════════════════════════
-function joinRoom(){
+async function joinRoom(){
   const code = document.getElementById('join-code-input').value.trim().toUpperCase();
   const nameVal = document.getElementById('join-name-input').value.trim();
   if(code.length < 4){ showErr('Ingresa un código válido'); return; }
 
+  roomCode = code;
+  const hostPeerId = codeToHostPeerId(code);
+
   document.getElementById('lobby').style.display='none';
   document.getElementById('client-room').style.display='flex';
-  document.getElementById('client-status').textContent = 'Conectando...';
+  document.getElementById('client-status').textContent = 'Conectando al host...';
 
   peer = new Peer({ debug: 0 });
   peer.on('open', id => {
     myId = id;
-    // El código es los primeros 6 chars del ID del host; necesitamos el peer ID completo del host
-    // Lo almacenamos como roomCode y buscamos la conexión directa
-    roomCode = code;
-    hostConn = peer.connect(code, { reliable: true });
+    hostConn = peer.connect(hostPeerId, { reliable: true });
 
     hostConn.on('open', ()=>{
       document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
     });
     hostConn.on('data', d => handleClientData(d));
     hostConn.on('close', ()=>showErr('Desconectado del host'));
-    hostConn.on('error', e=>showErr('Error de conexión: '+e));
+    hostConn.on('error', e=>showErr('Error de conexión'));
   });
   peer.on('error', e => {
     showErr('No se pudo conectar. Verifica el código. (' + e.type + ')');
@@ -556,7 +593,6 @@ function joinRoom(){
     document.getElementById('lobby').style.display='flex';
   });
 
-  // Pre-set name if provided
   if(nameVal) document.getElementById('name-input').value = nameVal;
 }
 
