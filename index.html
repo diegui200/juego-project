@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v22 — Multijugador</title>
+<title>Trivia Racer v24 — Multijugador</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -466,21 +466,45 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // no necesita estar "vivo" constantemente como PeerJS)
 // STUN + TURN servers
 // TURN garantiza conexión entre cualquier red (WiFi, datos móviles, NAT estricto)
+// ─── TURN servers ─────────────────────────────────────
+// Usamos múltiples TURN públicos y gratuitos para garantizar
+// conectividad entre redes distintas (datos móviles, NAT estricto, etc.)
+// Si uno falla, WebRTC prueba el siguiente automáticamente.
 const ICE_CFG = {
   iceServers: [
+    // STUN de Google — resolución de IP pública
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    // TURN primario — Open Relay (puerto 80 funciona con datos móviles)
-    { urls:'turn:openrelay.metered.ca:80',      username:'openrelayproject', credential:'openrelayproject' },
-    { urls:'turn:openrelay.metered.ca:443',     username:'openrelayproject', credential:'openrelayproject' },
-    { urls:'turns:openrelay.metered.ca:443',    username:'openrelayproject', credential:'openrelayproject' },
-    { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
-    // TURN secundario — Xirsys gratuito (más estable en móvil)
-    { urls:'turn:global.turn.twilio.com:3478',  username:'openrelayproject', credential:'openrelayproject' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    // STUN adicionales para cuando Google bloquea
+    { urls: 'stun:stun.stunprotocol.org:3478' },
+    { urls: 'stun:stun.voip.blackberry.com:3478' },
+    { urls: 'stun:stun.sipgate.net:3478' },
+
+    // TURN público #1 — freestun.net (gratuito, sin cuenta, estable)
+    { urls: 'turn:freestun.net:3478',  username: 'free', credential: 'free' },
+    { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
+
+    // TURN público #2 — relay.metered.ca demo (diferente endpoint que openrelay)
+    { urls: 'turn:relay1.expressturn.com:3478', username: 'efQCBH5NWHQ4BI2FMR', credential: 'rRJpzMHvVXNqxRrU' },
+
+    // TURN público #3 — numb.viagenie.ca (uno de los más históricos y estables)
+    { urls: 'turn:numb.viagenie.ca:3478', username: 'webrtc@live.com', credential: 'muazkh' },
+    { urls: 'turn:numb.viagenie.ca:3478?transport=tcp', username: 'webrtc@live.com', credential: 'muazkh' },
+
+    // TURN público #4 — turn.bistri.com
+    { urls: 'turn:turn.bistri.com:80', username: 'homeo', credential: 'homeo' },
+
+    // TURN público #5 — computeengineondemand (Google)
+    { urls: 'turn:74.125.140.127:19305?transport=udp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
+    { urls: 'turns:74.125.140.127:443?transport=tcp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
   ],
-  iceCandidatePoolSize: 10
+  iceCandidatePoolSize: 15,
+  iceTransportPolicy: 'all',   // probar STUN primero, TURN si falla
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require',
 };
 
 function genCode(){
@@ -621,7 +645,7 @@ async function hostAcceptClient(clientId, offerSDP){
       if(pc.iceGatheringState==='complete'){ resolve(); return; }
       const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
       pc.addEventListener('icegatheringstatechange',check);
-      setTimeout(resolve,8000);
+      setTimeout(resolve,12000);
     });
 
     // 4. Escribir answer + ICE del host en un solo PATCH
@@ -638,9 +662,11 @@ async function hostAcceptClient(clientId, offerSDP){
       if(Array.isArray(d)) d.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
     }
     applyClientIce();
-    // Reintentar por si el cliente los escribe después
-    setTimeout(applyClientIce,3000);
-    setTimeout(applyClientIce,7000);
+    // Reintentar con más frecuencia para redes lentas o lejanas
+    setTimeout(applyClientIce, 2000);
+    setTimeout(applyClientIce, 5000);
+    setTimeout(applyClientIce, 10000);
+    setTimeout(applyClientIce, 18000);
 
   } catch(err){
     console.warn('hostAcceptClient error',err);
@@ -738,11 +764,17 @@ async function joinRoom(){
   // Mostrar cambios de estado ICE en pantalla
   clientPc.oniceconnectionstatechange=()=>{
     const s=clientPc.iceConnectionState;
-    if(s==='checking') setStatus('[4/5] Probando conexión directa...');
-    if(s==='connected'||s==='completed') setStatus('✓ Canal ICE establecido — abriendo canal de datos...');
-
-    if(s==='disconnected') setStatus('⚠️ Conexión intermitente, reintentando...');
-    if(s==='failed') showErr('No se pudo conectar directamente. Si usas datos móviles, intenta con WiFi o pide al host que recree la sala.');
+    if(s==='checking') setStatus('[4/5] Probando rutas de conexión (puede tardar 15-30s desde redes distintas)...');
+    if(s==='connected'||s==='completed') setStatus('✓ Conectado — abriendo canal de datos...');
+    if(s==='disconnected'){
+      setStatus('⚠️ Conexión intermitente, reintentando...');
+      // ICE restart automático al desconectarse
+      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
+    }
+    if(s==='failed'){
+      setStatus('⚠️ Ruta directa fallida — intentando con servidor relay...');
+      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
+    }
   };
   clientPc.onconnectionstatechange=()=>{
     console.log('connState:', clientPc.connectionState);
@@ -775,7 +807,7 @@ async function joinRoom(){
     if(clientPc.iceGatheringState==='complete'){resolve();return;}
     const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
     clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve,8000);
+    setTimeout(resolve,12000);
   });
   setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
 
@@ -796,7 +828,7 @@ async function joinRoom(){
     if(clientPc){try{clientPc.close();}catch(e){} clientPc=null;}
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
-  },20000);
+  },35000);
 
   // Esperar answer + hostIce del host
   _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`,1000, async data=>{
