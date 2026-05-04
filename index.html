@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v28 — Multijugador</title>
+<title>Trivia Racer v24 — Multijugador</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -472,23 +472,37 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // Si uno falla, WebRTC prueba el siguiente automáticamente.
 const ICE_CFG = {
   iceServers: [
+    // STUN de Google — resolución de IP pública
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    // STUN adicionales para cuando Google bloquea
+    { urls: 'stun:stun.stunprotocol.org:3478' },
+    { urls: 'stun:stun.voip.blackberry.com:3478' },
+    { urls: 'stun:stun.sipgate.net:3478' },
 
-    // TURN — freestun (sin cuenta, activo)
+    // TURN público #1 — freestun.net (gratuito, sin cuenta, estable)
     { urls: 'turn:freestun.net:3478',  username: 'free', credential: 'free' },
     { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
 
-    // TURN — openrelay.metered.ca (más confiable en 2025)
-    { urls: 'turn:openrelay.metered.ca:80',      username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443',     username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:openrelay.metered.ca:443',    username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    // TURN público #2 — relay.metered.ca demo (diferente endpoint que openrelay)
+    { urls: 'turn:relay1.expressturn.com:3478', username: 'efQCBH5NWHQ4BI2FMR', credential: 'rRJpzMHvVXNqxRrU' },
+
+    // TURN público #3 — numb.viagenie.ca (uno de los más históricos y estables)
+    { urls: 'turn:numb.viagenie.ca:3478', username: 'webrtc@live.com', credential: 'muazkh' },
+    { urls: 'turn:numb.viagenie.ca:3478?transport=tcp', username: 'webrtc@live.com', credential: 'muazkh' },
+
+    // TURN público #4 — turn.bistri.com
+    { urls: 'turn:turn.bistri.com:80', username: 'homeo', credential: 'homeo' },
+
+    // TURN público #5 — computeengineondemand (Google)
+    { urls: 'turn:74.125.140.127:19305?transport=udp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
+    { urls: 'turns:74.125.140.127:443?transport=tcp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
   ],
-  iceCandidatePoolSize: 4,  // menos pool = gathering más rápido
-  iceTransportPolicy: 'all',
+  iceCandidatePoolSize: 15,
+  iceTransportPolicy: 'all',   // probar STUN primero, TURN si falla
   bundlePolicy: 'max-bundle',
   rtcpMuxPolicy: 'require',
 };
@@ -585,7 +599,7 @@ function showHostRoom(){
   },15000);
 
   // Escuchar nuevos clientes
-  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,500, async(clientsSnap)=>{
+  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,1500, async(clientsSnap)=>{
     if(!clientsSnap||typeof clientsSnap!=='object') return;
     for(const [cid, cdata] of Object.entries(clientsSnap)){
       if(hostPcs[cid]) continue;           // ya en proceso
@@ -626,12 +640,12 @@ async function hostAcceptClient(clientId, offerSDP){
     const answer=await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    // 3. Esperar ICE gathering (máx 3s — suficiente para STUN local, el resto llega igual)
+    // 3. Esperar a que ICE gathering termine (máx 4s)
     await new Promise(resolve=>{
       if(pc.iceGatheringState==='complete'){ resolve(); return; }
       const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
       pc.addEventListener('icegatheringstatechange',check);
-      setTimeout(resolve, 3000);
+      setTimeout(resolve,12000);
     });
 
     // 4. Escribir answer + ICE del host en un solo PATCH
@@ -642,20 +656,16 @@ async function hostAcceptClient(clientId, offerSDP){
     });
     console.log('[HOST] Answer escrita OK');
 
-    // 5. Leer ICE del cliente — con reintentos para candidatos que lleguen tarde
-    let appliedIceCount = 0;
+    // 5. Leer ICE del cliente (puede que ya estén o lleguen después)
     async function applyClientIce(){
       const d=await fbGet(`rooms/${roomCode}/clients/${clientId}/clientIce`);
-      if(Array.isArray(d) && d.length > appliedIceCount){
-        const newIce = d.slice(appliedIceCount);
-        appliedIceCount = d.length;
-        newIce.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
-      }
+      if(Array.isArray(d)) d.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
     }
     applyClientIce();
-    setTimeout(applyClientIce, 1500);
-    setTimeout(applyClientIce, 4000);
-    setTimeout(applyClientIce, 9000);
+    // Reintentar con más frecuencia para redes lentas o lejanas
+    setTimeout(applyClientIce, 2000);
+    setTimeout(applyClientIce, 5000);
+    setTimeout(applyClientIce, 10000);
     setTimeout(applyClientIce, 18000);
 
   } catch(err){
@@ -791,13 +801,13 @@ async function joinRoom(){
   const offer=await clientPc.createOffer();
   await clientPc.setLocalDescription(offer);
 
-  // Esperar ICE gathering (máx 3s — suficiente para candidatos locales/STUN)
+  // Esperar ICE gathering (máx 5s)
   setStatus('[2/5] Recopilando candidatos de red...');
   await new Promise(resolve=>{
     if(clientPc.iceGatheringState==='complete'){resolve();return;}
     const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
     clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve, 3000);
+    setTimeout(resolve,12000);
   });
   setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
 
@@ -821,7 +831,7 @@ async function joinRoom(){
   },35000);
 
   // Esperar answer + hostIce del host
-  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`,500, async data=>{
+  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`,1000, async data=>{
     if(connected) return;
     if(data.rejected){
       connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
