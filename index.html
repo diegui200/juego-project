@@ -464,11 +464,35 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 
 // ICE servers — STUN gratuito de Google (solo para atravesar NAT,
 // no necesita estar "vivo" constantemente como PeerJS)
+// STUN + TURN servers
+// TURN permite conexión incluso entre redes distintas (WiFi ↔ datos móviles)
+// Usando servidores públicos de Open Relay (sin registro, gratuitos)
 const ICE_CFG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
+    // TURN gratuito de Open Relay Project
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    // TURN adicional de numb.viagenie.ca (backup)
+    {
+      urls: 'turn:numb.viagenie.ca',
+      username: 'webrtc@live.com',
+      credential: 'muazkh'
+    }
   ]
 };
 
@@ -575,13 +599,16 @@ function showHostRoom(){
 }
 
 async function hostAcceptClient(clientId, offerSDP){
+  console.log('[HOST] Aceptando cliente:', clientId);
   maxPlayers=parseInt(document.getElementById('max-players-sel').value);
   if(Object.keys(hostPcs).length>=maxPlayers){
     fbMerge(`rooms/${roomCode}/clients/${clientId}`,{rejected:true}); return;
   }
 
   const pc=new RTCPeerConnection(ICE_CFG);
-  hostPcs[clientId]=pc; // marcar "en proceso" inmediatamente
+  hostPcs[clientId]=pc;
+
+  pc.oniceconnectionstatechange=()=>console.log('[HOST ICE]',clientId,pc.iceConnectionState);
 
   // Acumular ICE del host
   const hIce=[];
@@ -611,10 +638,12 @@ async function hostAcceptClient(clientId, offerSDP){
     });
 
     // 4. Escribir answer + ICE del host en un solo PATCH
+    console.log('[HOST] Escribiendo answer + '+hIce.length+' ICE en Firebase');
     await fbMerge(`rooms/${roomCode}/clients/${clientId}`,{
       answer: pc.localDescription.sdp,
       hostIce: hIce
     });
+    console.log('[HOST] Answer escrita OK');
 
     // 5. Leer ICE del cliente (puede que ya estén o lleguen después)
     async function applyClientIce(){
@@ -715,14 +744,27 @@ async function joinRoom(){
   roomCode=code;
   myId='client-'+genId();
   if(nameVal) document.getElementById('name-input').value=nameVal;
-  document.getElementById('client-status').textContent='Creando conexión...';
+  setStatus('[1/5] Creando conexión WebRTC...');
 
   clientPc=new RTCPeerConnection(ICE_CFG);
+
+  // Mostrar cambios de estado ICE en pantalla
+  clientPc.oniceconnectionstatechange=()=>{
+    const s=clientPc.iceConnectionState;
+    if(s==='checking') setStatus('[4/5] Probando conexión directa...');
+    if(s==='connected'||s==='completed') setStatus('✓ Canal ICE establecido — abriendo canal de datos...');
+
+    if(s==='disconnected') setStatus('⚠️ Conexión intermitente, reintentando...');
+    if(s==='failed') showErr('No se pudo conectar. Asegúrate de tener internet estable.');
+  };
+  clientPc.onconnectionstatechange=()=>{
+    console.log('connState:', clientPc.connectionState);
+  };
 
   // Canal de datos — el cliente lo crea
   clientChannel=clientPc.createDataChannel('game',{ordered:true});
   clientChannel.onopen=()=>{
-    document.getElementById('client-status').textContent='✓ Conectado — esperando al host...';
+    setStatus('✓ Conectado — esperando al host...');
     if(nameVal) sendToHost({type:'name-change',name:nameVal});
   };
   clientChannel.onmessage=ev=>{try{handleClientData(JSON.parse(ev.data));}catch(e){}};
@@ -730,21 +772,25 @@ async function joinRoom(){
 
   // Acumular ICE del cliente
   const cIce=[];
-  clientPc.onicecandidate=e=>{ if(e.candidate) cIce.push(e.candidate.toJSON()); };
+  clientPc.onicecandidate=e=>{
+    if(e.candidate){ cIce.push(e.candidate.toJSON()); }
+    else { console.log('ICE gathering done, candidates:', cIce.length); }
+  };
 
   // Crear offer
+  setStatus('[2/5] Generando offer...');
   const offer=await clientPc.createOffer();
   await clientPc.setLocalDescription(offer);
 
-  // Esperar ICE gathering (máx 4s)
+  // Esperar ICE gathering (máx 5s)
+  setStatus('[2/5] Recopilando candidatos de red...');
   await new Promise(resolve=>{
     if(clientPc.iceGatheringState==='complete'){resolve();return;}
     const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
     clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve,4000);
+    setTimeout(resolve,5000);
   });
-
-  document.getElementById('client-status').textContent='Esperando respuesta del host...';
+  setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
 
   // Escribir offer + ICE del cliente en Firebase de una vez
   await fbSet(`rooms/${code}/clients/${myId}`,{
@@ -753,6 +799,7 @@ async function joinRoom(){
     ts: Date.now()
   });
 
+  setStatus('[3/5] Esperando respuesta del host...');
   // Timeout global: si en 20s no hay answer → error
   let connected=false;
   const _joinTimeout=setTimeout(()=>{
@@ -776,15 +823,24 @@ async function joinRoom(){
     }
     if(data.answer && clientPc.signalingState==='have-local-offer'){
       connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
+      setStatus(`[4/5] Host respondió — aplicando answer + ${(data.hostIce||[]).length} ICE...`);
       try{
         await clientPc.setRemoteDescription({type:'answer',sdp:data.answer});
-        // Aplicar ICE del host
         if(Array.isArray(data.hostIce)){
           data.hostIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
         }
-      } catch(err){ console.warn('setRemoteDescription error',err); }
+      } catch(err){
+        setStatus('❌ Error aplicando answer: '+err.message);
+        console.warn('setRemoteDescription error',err);
+      }
     }
   });
+}
+
+function setStatus(msg){
+  const el=document.getElementById('client-status');
+  if(el) el.textContent=msg;
+  console.log('[STATUS]',msg);
 }
 
 function sendToHost(msg){
