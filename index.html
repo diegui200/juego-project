@@ -482,19 +482,17 @@ function genId(){
 }
 
 // ─── Firebase helpers ─────────────────────────────────
-async function fbPut(path, data){
+async function fbSet(path, data){
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(data)
     });
-    if(r.status === 401 || r.status === 403){
-      showErr('⚠️ Firebase bloqueado. Actualiza las reglas (ver instrucciones en el código).');
-    }
-    return r;
-  } catch(e){ console.warn('fbPut error', path, e); }
+    if(r.status===401||r.status===403)
+      showErr('⚠️ Firebase bloqueado — ve a Firebase Console → Realtime Database → Reglas → pon true en .read y .write → Publicar');
+  } catch(e){ console.warn('fbSet',path,e); }
 }
-async function fbPatch(path, data){
+async function fbMerge(path, data){
   try {
     await fetch(`${FIREBASE_URL}/${path}.json`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -505,354 +503,324 @@ async function fbPatch(path, data){
 async function fbGet(path){
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`);
-    if(r.status === 401 || r.status === 403){
-      showErr('⚠️ Firebase bloqueado. Actualiza las reglas de seguridad (ver instrucciones).');
+    if(r.status===401||r.status===403){
+      showErr('⚠️ Firebase bloqueado — actualiza las reglas de seguridad');
       return null;
     }
     if(!r.ok) return null;
-    return await r.json();
+    return r.json();
   } catch(e){ return null; }
 }
-async function fbDelete(path){
-  try { await fetch(`${FIREBASE_URL}/${path}.json`, { method:'DELETE' }); } catch(e){}
+async function fbDel(path){
+  try{ await fetch(`${FIREBASE_URL}/${path}.json`,{method:'DELETE'}); }catch(e){}
 }
 
-// Polling largo simulado: poll cada intervalo
-function fbPoll(path, interval, cb){
-  let active = true;
-  let last = '__INIT__';
+// Poller genérico que llama cb cada vez que el valor cambia
+function fbWatch(path, intervalMs, cb){
+  let active=true, lastStr='__INIT__';
   async function tick(){
     if(!active) return;
     const d = await fbGet(path);
-    const str = JSON.stringify(d);
-    if(str !== last){ last = str; if(d !== null) cb(d); }
-    if(active) setTimeout(tick, interval);
+    const s = JSON.stringify(d);
+    if(s !== lastStr){ lastStr=s; if(d!==null) cb(d); }
+    if(active) setTimeout(tick, intervalMs);
   }
   tick();
   return { stop(){ active=false; } };
 }
 
 // ─── Estado de conexiones ─────────────────────────────
-// hostPcs: { clientId → RTCPeerConnection }  (solo host)
-// hostChannels: { clientId → RTCDataChannel } (solo host)
-// clientPc: RTCPeerConnection (solo cliente)
-// clientChannel: RTCDataChannel (solo cliente)
-let hostPcs = {}, hostChannels = {};
-let clientPc = null, clientChannel = null;
-let _hostPollers = {}; // clientId → poller de señalización
-let _hostRoomPoller = null; // poller para nuevos clientes en sala
-let _clientPoller = null;
-let _hostHeartbeat = null;
+let hostPcs={}, hostChannels={};
+let clientPc=null, clientChannel=null;
+let _hostPollers={};
+let _hostRoomPoller=null;
+let _clientPoller=null;
+let _hostHeartbeat=null;
 
 // ─── HOST FLOW ────────────────────────────────────────
 function showHostRoom(){
-  isHost = true;
+  isHost=true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
-  document.getElementById('room-code').textContent = 'Conectando...';
+  document.getElementById('room-code').textContent='Conectando...';
 
-  roomCode = genCode();
-  myId = 'host-' + genId();
-  myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
+  roomCode=genCode();
+  myId='host-'+genId();
+  myName='HOST'; myColorIdx=0; myColor=CAR_COLORS[0];
 
-  // Registrar sala en Firebase (sin peerId dependiente de PeerJS)
-  fbPut(`rooms/${roomCode}`, { hostId: myId, ts: Date.now(), open: true });
-
-  // Limpiar sala al cerrar
-  window.addEventListener('beforeunload', ()=>{
-    navigator.sendBeacon(`${FIREBASE_URL}/rooms/${roomCode}.json`,
-      JSON.stringify({ open: false, ts: Date.now() }));
+  // Crear sala en Firebase
+  fbSet(`rooms/${roomCode}`, { hostId:myId, ts:Date.now(), open:true });
+  // Borrar sala al cerrar pestaña
+  window.addEventListener('beforeunload',()=>{
+    navigator.sendBeacon(`${FIREBASE_URL}/rooms/${roomCode}.json`, JSON.stringify({open:false,ts:0}));
   });
 
-  document.getElementById('room-code').textContent = roomCode;
+  document.getElementById('room-code').textContent=roomCode;
   refreshHostList();
 
-  // Heartbeat: mantiene ts actualizado y sala marcada open
-  _hostHeartbeat = setInterval(()=>{
-    fbPatch(`rooms/${roomCode}`, { ts: Date.now(), open: true });
-  }, 20000);
+  // Heartbeat cada 15s para mantener la sala viva
+  _hostHeartbeat=setInterval(()=>{
+    fbMerge(`rooms/${roomCode}`,{ts:Date.now(),open:true});
+  },15000);
 
-  // Escuchar nuevos clientes que quieran unirse
-  _hostRoomPoller = fbPoll(`rooms/${roomCode}/clients`, 2000, async (clientsSnap)=>{
-    if(!clientsSnap || typeof clientsSnap !== 'object') return;
-    for(const [clientId, clientData] of Object.entries(clientsSnap)){
-      if(hostPcs[clientId]) continue; // ya conectado o en proceso
-      if(!clientData || !clientData.offer) continue;
-      hostAcceptClient(clientId, clientData.offer);
+  // Escuchar nuevos clientes
+  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,1500, async(clientsSnap)=>{
+    if(!clientsSnap||typeof clientsSnap!=='object') return;
+    for(const [cid, cdata] of Object.entries(clientsSnap)){
+      if(hostPcs[cid]) continue;           // ya en proceso
+      if(!cdata||!cdata.offer) continue;   // aún no escribió offer
+      hostAcceptClient(cid, cdata.offer);
     }
   });
 }
 
 async function hostAcceptClient(clientId, offerSDP){
-  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
-  if(Object.keys(hostChannels).length >= maxPlayers){
-    await fbPut(`rooms/${roomCode}/clients/${clientId}/answer`, { rejected: true });
-    return;
+  maxPlayers=parseInt(document.getElementById('max-players-sel').value);
+  if(Object.keys(hostPcs).length>=maxPlayers){
+    fbMerge(`rooms/${roomCode}/clients/${clientId}`,{rejected:true}); return;
   }
 
-  const pc = new RTCPeerConnection(ICE_CFG);
-  hostPcs[clientId] = pc;
+  const pc=new RTCPeerConnection(ICE_CFG);
+  hostPcs[clientId]=pc; // marcar "en proceso" inmediatamente
 
-  // Recopilar ICE candidates del host y escribirlos en Firebase
-  const hostIceCandidates = [];
-  pc.onicecandidate = e => {
-    if(e.candidate) hostIceCandidates.push(e.candidate.toJSON());
+  // Acumular ICE del host
+  const hIce=[];
+  pc.onicecandidate=e=>{ if(e.candidate) hIce.push(e.candidate.toJSON()); };
+
+  // Canal de datos entrante del cliente
+  pc.ondatachannel=e=>{
+    const ch=e.channel;
+    ch.onopen=()=>{ hostChannels[clientId]=ch; onHostChannelOpen(clientId); };
+    ch.onmessage=ev=>{ try{handleHostData(clientId,JSON.parse(ev.data));}catch(err){} };
+    ch.onclose=()=>onHostChannelClose(clientId);
   };
-  pc.onicegatheringstatechange = async ()=>{
-    if(pc.iceGatheringState === 'complete'){
-      await fbPatch(`rooms/${roomCode}/clients/${clientId}`, {
-        hostIce: hostIceCandidates
-      });
+
+  try{
+    // 1. Aplicar offer del cliente
+    await pc.setRemoteDescription({type:'offer',sdp:offerSDP});
+    // 2. Crear answer
+    const answer=await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    // 3. Esperar a que ICE gathering termine (máx 4s)
+    await new Promise(resolve=>{
+      if(pc.iceGatheringState==='complete'){ resolve(); return; }
+      const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
+      pc.addEventListener('icegatheringstatechange',check);
+      setTimeout(resolve,4000);
+    });
+
+    // 4. Escribir answer + ICE del host en un solo PATCH
+    await fbMerge(`rooms/${roomCode}/clients/${clientId}`,{
+      answer: pc.localDescription.sdp,
+      hostIce: hIce
+    });
+
+    // 5. Leer ICE del cliente (puede que ya estén o lleguen después)
+    async function applyClientIce(){
+      const d=await fbGet(`rooms/${roomCode}/clients/${clientId}/clientIce`);
+      if(Array.isArray(d)) d.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
     }
-  };
+    applyClientIce();
+    // Reintentar por si el cliente los escribe después
+    setTimeout(applyClientIce,3000);
+    setTimeout(applyClientIce,7000);
 
-  // Canal de datos
-  pc.ondatachannel = e => {
-    const ch = e.channel;
-    ch.onopen = ()=>{
-      hostChannels[clientId] = ch;
-      onHostChannelOpen(clientId, ch);
-    };
-    ch.onmessage = ev => {
-      try { handleHostData(clientId, JSON.parse(ev.data)); } catch(err){}
-    };
-    ch.onclose = ()=> onHostChannelClose(clientId);
-  };
-
-  // Aplicar offer del cliente
-  await pc.setRemoteDescription({ type:'offer', sdp: offerSDP });
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-
-  // Escribir answer en Firebase para que el cliente la lea
-  await fbPatch(`rooms/${roomCode}/clients/${clientId}`, {
-    answer: pc.localDescription.sdp
-  });
-
-  // Leer ICE candidates del cliente cuando lleguen
-  let clientIcePoller = fbPoll(`rooms/${roomCode}/clients/${clientId}/clientIce`, 1500, candidates=>{
-    if(!Array.isArray(candidates)) return;
-    candidates.forEach(c=>{ try{ pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} });
-    clientIcePoller.stop();
-  });
-  _hostPollers[clientId] = clientIcePoller;
+  } catch(err){
+    console.warn('hostAcceptClient error',err);
+    delete hostPcs[clientId];
+  }
 }
 
-function onHostChannelOpen(clientId, ch){
-  const usedIdx = Object.values(players).map(p=>p.colorIdx);
-  let ci = 1; while(usedIdx.includes(ci)) ci++; // índice 0 reservado para host
-  players[clientId] = {
-    id: clientId,
-    name: randomName(),
-    color: CAR_COLORS[ci % CAR_COLORS.length],
-    colorIdx: ci
-  };
-  sendToClient(clientId, {
-    type:'welcome', playerId: clientId,
-    name: players[clientId].name,
-    color: players[clientId].color,
-    colorIdx: ci,
-    players
-  });
-  broadcastToClients({ type:'players-update', players });
+function onHostChannelOpen(clientId){
+  const usedIdx=Object.values(players).map(p=>p.colorIdx);
+  let ci=1; while(usedIdx.includes(ci)) ci++;
+  players[clientId]={id:clientId,name:randomName(),color:CAR_COLORS[ci%CAR_COLORS.length],colorIdx:ci};
+  sendToClient(clientId,{type:'welcome',playerId:clientId,name:players[clientId].name,
+    color:players[clientId].color,colorIdx:ci,players});
+  broadcastToClients({type:'players-update',players});
   refreshHostList();
 }
 
 function onHostChannelClose(clientId){
-  if(hostPcs[clientId]){ try{ hostPcs[clientId].close(); }catch(e){} delete hostPcs[clientId]; }
+  if(hostPcs[clientId]){try{hostPcs[clientId].close();}catch(e){} delete hostPcs[clientId];}
   delete hostChannels[clientId];
-  if(_hostPollers[clientId]){ _hostPollers[clientId].stop(); delete _hostPollers[clientId]; }
-  delete players[clientId];
-  delete remoteStates[clientId];
-  broadcastToClients({ type:'players-update', players });
+  if(_hostPollers[clientId]){_hostPollers[clientId].stop();delete _hostPollers[clientId];}
+  delete players[clientId]; delete remoteStates[clientId];
+  broadcastToClients({type:'players-update',players});
   refreshHostList();
 }
 
-function sendToClient(clientId, msg){
-  const ch = hostChannels[clientId];
-  if(ch && ch.readyState==='open'){
-    try{ ch.send(JSON.stringify(msg)); }catch(e){}
-  }
+function sendToClient(clientId,msg){
+  const ch=hostChannels[clientId];
+  if(ch&&ch.readyState==='open') try{ch.send(JSON.stringify(msg));}catch(e){}
 }
+function broadcastToClients(msg){ Object.keys(hostChannels).forEach(id=>sendToClient(id,msg)); }
 
-function broadcastToClients(msg){
-  Object.keys(hostChannels).forEach(id=> sendToClient(id, msg));
-}
-
-function handleHostData(pid, d){
+function handleHostData(pid,d){
   if(d.type==='name-change'){
-    if(players[pid]) players[pid].name = d.name;
-    broadcastToClients({ type:'players-update', players });
-    refreshHostList();
+    if(players[pid]) players[pid].name=d.name;
+    broadcastToClients({type:'players-update',players}); refreshHostList();
   }
   if(d.type==='state-update'){
-    remoteStates[pid] = d.state;
-    if(d.state.laps >= 5 && !d.state.finished) d.state.finished = true;
-    checkMultiFinish(pid, d.state);
+    remoteStates[pid]=d.state;
+    if(d.state.laps>=5&&!d.state.finished) d.state.finished=true;
+    checkMultiFinish(pid,d.state);
     Object.keys(hostChannels).forEach(otherId=>{
-      if(otherId === pid) return;
-      sendToClient(otherId, { type:'relay-state', fromId: pid, state: d.state });
+      if(otherId===pid) return;
+      sendToClient(otherId,{type:'relay-state',fromId:pid,state:d.state});
     });
   }
 }
 
-function hostSelectTrack(n, el){
-  selectedTrack = n;
+function hostSelectTrack(n,el){
+  selectedTrack=n;
   document.querySelectorAll('.ts-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
 }
-
 function hostStartGame(){
-  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
-  broadcastToClients({ type:'start', track: selectedTrack, players });
-  launchGame(selectedTrack, players);
+  maxPlayers=parseInt(document.getElementById('max-players-sel').value);
+  broadcastToClients({type:'start',track:selectedTrack,players});
+  launchGame(selectedTrack,players);
 }
-
 function hostBackToLobby(){
-  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat=null; }
-  if(_hostRoomPoller){ _hostRoomPoller.stop(); _hostRoomPoller=null; }
+  if(_hostHeartbeat){clearInterval(_hostHeartbeat);_hostHeartbeat=null;}
+  if(_hostRoomPoller){_hostRoomPoller.stop();_hostRoomPoller=null;}
   Object.values(_hostPollers).forEach(p=>p.stop()); _hostPollers={};
-  Object.values(hostPcs).forEach(pc=>{ try{ pc.close(); }catch(e){} }); hostPcs={};
+  Object.values(hostPcs).forEach(pc=>{try{pc.close();}catch(e){}}); hostPcs={};
   hostChannels={}; players={}; remoteStates={}; isHost=false;
-  fbPatch(`rooms/${roomCode}`, { open: false });
+  fbMerge(`rooms/${roomCode}`,{open:false});
   document.getElementById('host-room').style.display='none';
   document.getElementById('lobby').style.display='flex';
 }
 
 // ─── CLIENT FLOW ──────────────────────────────────────
 async function joinRoom(){
-  const code = document.getElementById('join-code-input').value.trim().toUpperCase();
-  const nameVal = document.getElementById('join-name-input').value.trim();
-  if(code.length < 4){ showErr('Ingresa un código válido'); return; }
+  const code=document.getElementById('join-code-input').value.trim().toUpperCase();
+  const nameVal=document.getElementById('join-name-input').value.trim();
+  if(code.length<4){showErr('Ingresa un código válido');return;}
 
   document.getElementById('lobby').style.display='none';
   document.getElementById('client-room').style.display='flex';
-  document.getElementById('client-status').textContent = 'Buscando sala...';
+  document.getElementById('client-status').textContent='Buscando sala...';
 
-  // Verificar que la sala existe y está abierta
-  const roomData = await fbGet(`rooms/${code}`);
-  if(!roomData || !roomData.open || Date.now() - roomData.ts > 120000){
-    showErr('Sala no encontrada o expirada. Pide al host que cree una nueva.');
+  const roomData=await fbGet(`rooms/${code}`);
+  if(!roomData||!roomData.open||Date.now()-roomData.ts>90000){
+    showErr('Sala no encontrada o cerrada. Pide al host que cree una nueva.');
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
     return;
   }
 
-  roomCode = code;
-  myId = 'client-' + genId();
-  document.getElementById('client-status').textContent = 'Conectando al host...';
-  if(nameVal) document.getElementById('name-input').value = nameVal;
+  roomCode=code;
+  myId='client-'+genId();
+  if(nameVal) document.getElementById('name-input').value=nameVal;
+  document.getElementById('client-status').textContent='Creando conexión...';
 
-  // Crear PeerConnection
-  clientPc = new RTCPeerConnection(ICE_CFG);
+  clientPc=new RTCPeerConnection(ICE_CFG);
 
-  // Crear canal de datos (el cliente lo inicia)
-  clientChannel = clientPc.createDataChannel('game', { ordered: false, maxRetransmits: 2 });
-  clientChannel.onopen = ()=>{
-    document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
-    if(nameVal) sendToHost({ type:'name-change', name: nameVal });
+  // Canal de datos — el cliente lo crea
+  clientChannel=clientPc.createDataChannel('game',{ordered:true});
+  clientChannel.onopen=()=>{
+    document.getElementById('client-status').textContent='✓ Conectado — esperando al host...';
+    if(nameVal) sendToHost({type:'name-change',name:nameVal});
   };
-  clientChannel.onmessage = ev=>{
-    try{ handleClientData(JSON.parse(ev.data)); }catch(e){}
-  };
-  clientChannel.onclose = ()=> showErr('Desconectado del host');
+  clientChannel.onmessage=ev=>{try{handleClientData(JSON.parse(ev.data));}catch(e){}};
+  clientChannel.onclose=()=>showErr('Desconectado del host');
 
-  // Recopilar ICE candidates del cliente
-  const clientIceCandidates = [];
-  clientPc.onicecandidate = e=>{
-    if(e.candidate) clientIceCandidates.push(e.candidate.toJSON());
-  };
-  clientPc.onicegatheringstatechange = async ()=>{
-    if(clientPc.iceGatheringState === 'complete'){
-      await fbPatch(`rooms/${code}/clients/${myId}`, { clientIce: clientIceCandidates });
-    }
-  };
+  // Acumular ICE del cliente
+  const cIce=[];
+  clientPc.onicecandidate=e=>{ if(e.candidate) cIce.push(e.candidate.toJSON()); };
 
-  // Crear offer y escribirla en Firebase
-  const offer = await clientPc.createOffer();
+  // Crear offer
+  const offer=await clientPc.createOffer();
   await clientPc.setLocalDescription(offer);
-  await fbPut(`rooms/${code}/clients/${myId}`, { offer: offer.sdp, ts: Date.now() });
 
-  // Esperar answer del host (polling)
-  let answered = false;
-  let _timeout = setTimeout(()=>{
-    if(answered) return;
-    _clientPoller && _clientPoller.stop();
-    showErr('El host no respondió. Verifica el código o pide al host que recree la sala.');
-    if(clientPc){ try{ clientPc.close(); }catch(e){} clientPc=null; }
+  // Esperar ICE gathering (máx 4s)
+  await new Promise(resolve=>{
+    if(clientPc.iceGatheringState==='complete'){resolve();return;}
+    const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
+    clientPc.addEventListener('icegatheringstatechange',check);
+    setTimeout(resolve,4000);
+  });
+
+  document.getElementById('client-status').textContent='Esperando respuesta del host...';
+
+  // Escribir offer + ICE del cliente en Firebase de una vez
+  await fbSet(`rooms/${code}/clients/${myId}`,{
+    offer: clientPc.localDescription.sdp,
+    clientIce: cIce,
+    ts: Date.now()
+  });
+
+  // Timeout global: si en 20s no hay answer → error
+  let connected=false;
+  const _joinTimeout=setTimeout(()=>{
+    if(connected) return;
+    if(_clientPoller) _clientPoller.stop();
+    showErr('El host no respondió a tiempo. Intenta de nuevo.');
+    if(clientPc){try{clientPc.close();}catch(e){} clientPc=null;}
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
-  }, 15000);
+  },20000);
 
-  _clientPoller = fbPoll(`rooms/${code}/clients/${myId}`, 1500, async data=>{
-    if(answered) return;
+  // Esperar answer + hostIce del host
+  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`,1000, async data=>{
+    if(connected) return;
     if(data.rejected){
-      answered=true; clearTimeout(_timeout); _clientPoller.stop();
+      connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
       showErr('No se pudo unir: sala llena');
       document.getElementById('client-room').style.display='none';
       document.getElementById('lobby').style.display='flex';
       return;
     }
-    if(data.answer){
-      answered=true; clearTimeout(_timeout); _clientPoller.stop();
-      await clientPc.setRemoteDescription({ type:'answer', sdp: data.answer });
-      // Aplicar ICE del host si ya llegaron
-      if(data.hostIce && Array.isArray(data.hostIce)){
-        data.hostIce.forEach(c=>{ try{ clientPc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} });
-      }
+    if(data.answer && clientPc.signalingState==='have-local-offer'){
+      connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
+      try{
+        await clientPc.setRemoteDescription({type:'answer',sdp:data.answer});
+        // Aplicar ICE del host
+        if(Array.isArray(data.hostIce)){
+          data.hostIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
+        }
+      } catch(err){ console.warn('setRemoteDescription error',err); }
     }
   });
 }
 
 function sendToHost(msg){
-  if(clientChannel && clientChannel.readyState==='open'){
-    try{ clientChannel.send(JSON.stringify(msg)); }catch(e){}
-  }
+  if(clientChannel&&clientChannel.readyState==='open')
+    try{clientChannel.send(JSON.stringify(msg));}catch(e){}
 }
-
 function confirmName(){
-  const n = document.getElementById('name-input').value.trim();
+  const n=document.getElementById('name-input').value.trim();
   if(!n) return;
-  myName = n;
-  sendToHost({ type:'name-change', name: myName });
-  document.getElementById('client-status').textContent = '✓ Nombre guardado: ' + myName;
+  myName=n;
+  sendToHost({type:'name-change',name:myName});
+  document.getElementById('client-status').textContent='✓ Nombre guardado: '+myName;
 }
-
 function handleClientData(d){
-  if(d.type==='rejected'){ showErr('No se pudo unir: ' + d.reason); return; }
+  if(d.type==='rejected'){showErr('No se pudo unir: '+d.reason);return;}
   if(d.type==='welcome'){
-    myId = d.playerId;
-    const typedName = document.getElementById('name-input').value.trim();
-    myName = typedName || d.name;
-    myColor = d.color; myColorIdx = d.colorIdx;
-    players = d.players;
-    document.getElementById('name-input').value = myName;
-    if(typedName) sendToHost({ type:'name-change', name: myName });
+    myId=d.playerId;
+    const typed=document.getElementById('name-input').value.trim();
+    myName=typed||d.name; myColor=d.color; myColorIdx=d.colorIdx;
+    players=d.players;
+    document.getElementById('name-input').value=myName;
+    if(typed) sendToHost({type:'name-change',name:myName});
     refreshClientList();
   }
   if(d.type==='players-update'){
-    players = d.players;
-    if(players[myId]){ myName=players[myId].name; myColor=players[myId].color; }
+    players=d.players;
+    if(players[myId]){myName=players[myId].name;myColor=players[myId].color;}
     refreshClientList();
   }
-  if(d.type==='start'){
-    selectedTrack = d.track; players = d.players;
-    launchGame(selectedTrack, players);
-  }
-  if(d.type==='relay-state'){
-    remoteStates[d.fromId] = d.state;
-    checkMultiFinish(d.fromId, d.state);
-  }
-  if(d.type==='host-state'){
-    remoteStates[d.fromId] = d.state;
-    checkMultiFinish(d.fromId, d.state);
-  }
-  if(d.type==='podium'){
-    finishers = d.finishers;
-    if(!podiumShown) showPodium();
-  }
+  if(d.type==='start'){ selectedTrack=d.track; players=d.players; launchGame(selectedTrack,players); }
+  if(d.type==='relay-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
+  if(d.type==='host-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
+  if(d.type==='podium'){ finishers=d.finishers; if(!podiumShown) showPodium(); }
   if(d.type==='back-to-lobby') resetToLobby();
 }
+
 
 // ─── sendMyState: usar canal correcto según rol ────────
 // usa sendToHost() o broadcastToClients() según el rol
