@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v21 — Multijugador</title>
+<title>Trivia Racer v22 — Multijugador</title>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -475,6 +475,19 @@ function genCode(){
   return c;
 }
 
+let _hostHeartbeat = null;
+function startHostHeartbeat(){
+  if(_hostHeartbeat) clearInterval(_hostHeartbeat);
+  _hostHeartbeat = setInterval(()=>{
+    if(!peer || peer.destroyed) { clearInterval(_hostHeartbeat); return; }
+    if(peer.disconnected){
+      try { peer.reconnect(); } catch(e){}
+    }
+    // Mantener room code visible
+    if(myId) document.getElementById('room-code').textContent = roomCode;
+  }, 20000); // cada 20 segundos
+}
+
 async function registerRoom(code, peerId){
   if(!FIREBASE_URL){ console.warn('Firebase URL no configurada'); return; }
   try {
@@ -500,7 +513,16 @@ async function lookupRoom(code){
   } catch(e){ return null; }
 }
 
-const PEER_CFG = { debug: 0 };
+const PEER_CFG = {
+  debug: 0,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' }
+    ]
+  }
+};
 
 // ═══════════════════════════════════════════════════════
 // HOST FLOW
@@ -520,8 +542,23 @@ function showHostRoom(){
     myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
     // El host NO se agrega a players[] — es solo espectador, no compite
     refreshHostList();
+    startHostHeartbeat();
   });
-  peer.on('error', e => showErr('Error PeerJS: ' + e.type));
+  peer.on('disconnected', () => {
+    // El servidor de señalización cerró la conexión — reconectar automáticamente
+    if(peer && !peer.destroyed && !gameRunning){
+      document.getElementById('room-code').textContent = 'Reconectando...';
+      setTimeout(()=>{
+        try { peer.reconnect(); } catch(e){}
+      }, 1500);
+    }
+  });
+  peer.on('error', e => {
+    showErr('Error PeerJS: ' + e.type);
+    if(e.type === 'network' || e.type === 'server-error'){
+      setTimeout(()=>{ try { peer.reconnect(); } catch(err){} }, 2000);
+    }
+  });
   peer.on('connection', onHostConnection);
 }
 
@@ -587,6 +624,7 @@ function hostStartGame(){
 // CLIENT FLOW
 // ═══════════════════════════════════════════════════════
 function hostBackToLobby(){
+  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
   if(peer){ peer.destroy(); peer = null; }
   players = {}; remoteStates = {}; clientConns = {}; isHost = false;
   document.getElementById('host-room').style.display='none';
@@ -859,6 +897,7 @@ function backToLobby(){
 }
 
 function resetToLobby(){
+  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
   document.getElementById('podium-screen').style.display='none';
   document.getElementById('game-outer').style.display='none';
   document.getElementById('host-room').style.display='none';
