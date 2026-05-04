@@ -478,14 +478,23 @@ function genCode(){
 let _hostHeartbeat = null;
 function startHostHeartbeat(){
   if(_hostHeartbeat) clearInterval(_hostHeartbeat);
-  _hostHeartbeat = setInterval(()=>{
+  _hostHeartbeat = setInterval(async ()=>{
     if(!peer || peer.destroyed) { clearInterval(_hostHeartbeat); return; }
     if(peer.disconnected){
       try { peer.reconnect(); } catch(e){}
     }
-    // Mantener room code visible
+    // Refrescar timestamp en Firebase cada 30s para que la sala siga "viva"
+    if(myId && roomCode && FIREBASE_URL){
+      try {
+        await fetch(`${FIREBASE_URL}/rooms/${roomCode}.json`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ts: Date.now() })
+        });
+      } catch(e){}
+    }
     if(myId) document.getElementById('room-code').textContent = roomCode;
-  }, 20000); // cada 20 segundos
+  }, 30000); // cada 30 segundos
 }
 
 async function registerRoom(code, peerId){
@@ -508,7 +517,7 @@ async function lookupRoom(code){
     const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
     if(!r.ok) return null;
     const d = await r.json();
-    if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000) return d.peerId;
+    if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 90000) return d.peerId;
     return null;
   } catch(e){ return null; }
 }
@@ -646,7 +655,7 @@ async function joinRoom(){
     const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
     if(r.ok){
       const d = await r.json();
-      if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 7200000){
+      if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 90000){
         hostPeerId = d.peerId;
       }
     }
@@ -663,10 +672,33 @@ async function joinRoom(){
   document.getElementById('client-status').textContent = 'Conectando al host...';
 
   peer = new Peer(PEER_CFG);
+
+  // Timeout de seguridad: si en 12s no se conecta, volver al lobby
+  let _joinTimeout = setTimeout(()=>{
+    if(hostConn && hostConn.open) return; // ya conectó, no hacer nada
+    showErr('No se pudo conectar. La sala puede haber expirado. Pide al host que cree una nueva sala.');
+    if(peer){ peer.destroy(); peer = null; }
+    document.getElementById('client-room').style.display='none';
+    document.getElementById('lobby').style.display='flex';
+  }, 12000);
+
   peer.on('open', id => {
     myId = id;
     hostConn = peer.connect(hostPeerId, { reliable: true });
+
+    // Timeout adicional si el peer abre pero la conexión al host no
+    let _connTimeout = setTimeout(()=>{
+      if(hostConn && hostConn.open) return;
+      clearTimeout(_joinTimeout);
+      showErr('El host no responde. La sala expiró. Pide al host que cree una nueva sala.');
+      if(peer){ peer.destroy(); peer = null; }
+      document.getElementById('client-room').style.display='none';
+      document.getElementById('lobby').style.display='flex';
+    }, 10000);
+
     hostConn.on('open', ()=>{
+      clearTimeout(_joinTimeout);
+      clearTimeout(_connTimeout);
       document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
       // Enviar nombre inmediatamente si el usuario escribió uno
       if(nameVal) hostConn.send({ type:'name-change', name: nameVal });
