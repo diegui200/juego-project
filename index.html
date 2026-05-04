@@ -484,10 +484,14 @@ function genId(){
 // ─── Firebase helpers ─────────────────────────────────
 async function fbPut(path, data){
   try {
-    await fetch(`${FIREBASE_URL}/${path}.json`, {
+    const r = await fetch(`${FIREBASE_URL}/${path}.json`, {
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(data)
     });
+    if(r.status === 401 || r.status === 403){
+      showErr('⚠️ Firebase bloqueado. Actualiza las reglas (ver instrucciones en el código).');
+    }
+    return r;
   } catch(e){ console.warn('fbPut error', path, e); }
 }
 async function fbPatch(path, data){
@@ -501,6 +505,10 @@ async function fbPatch(path, data){
 async function fbGet(path){
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`);
+    if(r.status === 401 || r.status === 403){
+      showErr('⚠️ Firebase bloqueado. Actualiza las reglas de seguridad (ver instrucciones).');
+      return null;
+    }
     if(!r.ok) return null;
     return await r.json();
   } catch(e){ return null; }
@@ -723,7 +731,7 @@ async function joinRoom(){
 
   // Verificar que la sala existe y está abierta
   const roomData = await fbGet(`rooms/${code}`);
-  if(!roomData || !roomData.open || Date.now() - roomData.ts > 60000){
+  if(!roomData || !roomData.open || Date.now() - roomData.ts > 120000){
     showErr('Sala no encontrada o expirada. Pide al host que cree una nueva.');
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
