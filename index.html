@@ -465,35 +465,22 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // ICE servers — STUN gratuito de Google (solo para atravesar NAT,
 // no necesita estar "vivo" constantemente como PeerJS)
 // STUN + TURN servers
-// TURN permite conexión incluso entre redes distintas (WiFi ↔ datos móviles)
-// Usando servidores públicos de Open Relay (sin registro, gratuitos)
+// TURN garantiza conexión entre cualquier red (WiFi, datos móviles, NAT estricto)
 const ICE_CFG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN gratuito de Open Relay Project
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    // TURN adicional de numb.viagenie.ca (backup)
-    {
-      urls: 'turn:numb.viagenie.ca',
-      username: 'webrtc@live.com',
-      credential: 'muazkh'
-    }
-  ]
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    // TURN primario — Open Relay (puerto 80 funciona con datos móviles)
+    { urls:'turn:openrelay.metered.ca:80',      username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443',     username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turns:openrelay.metered.ca:443',    username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
+    // TURN secundario — Xirsys gratuito (más estable en móvil)
+    { urls:'turn:global.turn.twilio.com:3478',  username:'openrelayproject', credential:'openrelayproject' },
+  ],
+  iceCandidatePoolSize: 10
 };
 
 function genCode(){
@@ -634,7 +621,7 @@ async function hostAcceptClient(clientId, offerSDP){
       if(pc.iceGatheringState==='complete'){ resolve(); return; }
       const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
       pc.addEventListener('icegatheringstatechange',check);
-      setTimeout(resolve,4000);
+      setTimeout(resolve,8000);
     });
 
     // 4. Escribir answer + ICE del host en un solo PATCH
@@ -755,7 +742,7 @@ async function joinRoom(){
     if(s==='connected'||s==='completed') setStatus('✓ Canal ICE establecido — abriendo canal de datos...');
 
     if(s==='disconnected') setStatus('⚠️ Conexión intermitente, reintentando...');
-    if(s==='failed') showErr('No se pudo conectar. Asegúrate de tener internet estable.');
+    if(s==='failed') showErr('No se pudo conectar directamente. Si usas datos móviles, intenta con WiFi o pide al host que recree la sala.');
   };
   clientPc.onconnectionstatechange=()=>{
     console.log('connState:', clientPc.connectionState);
@@ -788,7 +775,7 @@ async function joinRoom(){
     if(clientPc.iceGatheringState==='complete'){resolve();return;}
     const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
     clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve,5000);
+    setTimeout(resolve,8000);
   });
   setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
 
@@ -1110,13 +1097,21 @@ resize();
 function scaleCanvas(){
   const sw = document.getElementById('canvas-scale-wrap');
   const availW = sw.offsetWidth || window.innerWidth;
-  const availH = sw.offsetHeight || (window.innerHeight - 140);
+  const availH = sw.offsetHeight || (window.innerHeight - 160);
   const scaleW = availW / 820;
   const scaleH = availH / 430;
   const scale = Math.min(scaleW, scaleH, 1);
-  sw.style.height = Math.round(430*scale)+'px';
+  const scaledH = Math.round(430 * scale);
+  const scaledW = Math.round(820 * scale);
+  sw.style.height = scaledH + 'px';
+  sw.style.display = 'flex';
+  sw.style.justifyContent = 'center';
+  sw.style.alignItems = 'flex-start';
+  // Centrar el canvas-wrap dentro del scale-wrap
   wrap.style.transform = 'scale('+scale+')';
-  wrap.style.transformOrigin = 'top left';
+  wrap.style.transformOrigin = 'top center';
+  wrap.style.marginLeft = 'auto';
+  wrap.style.marginRight = 'auto';
 }
 requestAnimationFrame(()=>{ scaleCanvas(); });
 window.addEventListener('resize', scaleCanvas);
