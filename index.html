@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Trivia Racer v22 — Multijugador</title>
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -384,15 +383,12 @@ function randomName(){ return NAMES_POOL[Math.floor(Math.random()*NAMES_POOL.len
 // ═══════════════════════════════════════════════════════
 // ESTADO GLOBAL MULTIJUGADOR
 // ═══════════════════════════════════════════════════════
-let peer = null;          // PeerJS instance
 let isHost = false;
-let myId = '';            // peer ID local
+let myId = '';
 let myName = '';
 let myColor = CAR_COLORS[0];
 let myColorIdx = 0;
-let roomCode = '';        // = host peer ID (6 chars)
-let hostConn = null;      // cliente → conexión al host
-let clientConns = {};     // host → { peerId: DataConnection }
+let roomCode = '';
 let maxPlayers = 10;
 let selectedTrack = 1;
 
@@ -455,87 +451,92 @@ function refreshClientList(){
 }
 
 // ═══════════════════════════════════════════════════════
-// SEÑALIZACIÓN — Firebase Realtime Database
-// INSTRUCCIONES DE CONFIGURACIÓN (1 vez, 3 minutos):
+// SEÑALIZACIÓN — Firebase Realtime Database (WebRTC nativo)
 //
-// 1. Ve a https://console.firebase.google.com
-// 2. "Crear proyecto" → ponle cualquier nombre → continuar
-// 3. En el menú izquierdo: "Realtime Database" → "Crear base de datos"
-// 4. Elige cualquier región → "Iniciar en modo de prueba" → Listo
-// 5. Copia la URL que aparece (ej: https://mi-juego-xxxxx-default-rtdb.firebaseio.com)
-// 6. Pégala abajo en FIREBASE_URL
+// Firebase solo intercambia offers/answers/ICE candidates.
+// Una vez conectados, los datos van peer-to-peer directamente.
+// NO depende de ningún servidor externo que pueda expirar.
+//
+// Tu Firebase URL (ya configurada):
 // ═══════════════════════════════════════════════════════
 
 const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 
-function genCode(){
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let c = '';
-  for(let i=0;i<6;i++) c += chars[Math.floor(Math.random()*chars.length)];
-  return c;
-}
-
-let _hostHeartbeat = null;
-function startHostHeartbeat(){
-  if(_hostHeartbeat) clearInterval(_hostHeartbeat);
-  _hostHeartbeat = setInterval(async ()=>{
-    if(!peer || peer.destroyed) { clearInterval(_hostHeartbeat); return; }
-    if(peer.disconnected){
-      try { peer.reconnect(); } catch(e){}
-    }
-    // Refrescar timestamp en Firebase cada 30s para que la sala siga "viva"
-    if(myId && roomCode && FIREBASE_URL){
-      try {
-        await fetch(`${FIREBASE_URL}/rooms/${roomCode}.json`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ts: Date.now() })
-        });
-      } catch(e){}
-    }
-    if(myId) document.getElementById('room-code').textContent = roomCode;
-  }, 30000); // cada 30 segundos
-}
-
-async function registerRoom(code, peerId){
-  if(!FIREBASE_URL){ console.warn('Firebase URL no configurada'); return; }
-  try {
-    await fetch(`${FIREBASE_URL}/rooms/${code}.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ peerId, ts: Date.now() })
-    });
-    window.addEventListener('beforeunload', ()=>{
-      navigator.sendBeacon(`${FIREBASE_URL}/rooms/${code}.json`, 'null');
-    });
-  } catch(e){ console.warn('registerRoom error', e); }
-}
-
-async function lookupRoom(code){
-  if(!FIREBASE_URL) return null;
-  try {
-    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
-    if(!r.ok) return null;
-    const d = await r.json();
-    if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 90000) return d.peerId;
-    return null;
-  } catch(e){ return null; }
-}
-
-const PEER_CFG = {
-  debug: 0,
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:global.stun.twilio.com:3478' }
-    ]
-  }
+// ICE servers — STUN gratuito de Google (solo para atravesar NAT,
+// no necesita estar "vivo" constantemente como PeerJS)
+const ICE_CFG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ]
 };
 
-// ═══════════════════════════════════════════════════════
-// HOST FLOW
-// ═══════════════════════════════════════════════════════
+function genCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c=''; for(let i=0;i<6;i++) c+=chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+function genId(){
+  return Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+}
+
+// ─── Firebase helpers ─────────────────────────────────
+async function fbPut(path, data){
+  try {
+    await fetch(`${FIREBASE_URL}/${path}.json`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+  } catch(e){ console.warn('fbPut error', path, e); }
+}
+async function fbPatch(path, data){
+  try {
+    await fetch(`${FIREBASE_URL}/${path}.json`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+  } catch(e){}
+}
+async function fbGet(path){
+  try {
+    const r = await fetch(`${FIREBASE_URL}/${path}.json`);
+    if(!r.ok) return null;
+    return await r.json();
+  } catch(e){ return null; }
+}
+async function fbDelete(path){
+  try { await fetch(`${FIREBASE_URL}/${path}.json`, { method:'DELETE' }); } catch(e){}
+}
+
+// Polling largo simulado: poll cada intervalo
+function fbPoll(path, interval, cb){
+  let active = true;
+  let last = '__INIT__';
+  async function tick(){
+    if(!active) return;
+    const d = await fbGet(path);
+    const str = JSON.stringify(d);
+    if(str !== last){ last = str; if(d !== null) cb(d); }
+    if(active) setTimeout(tick, interval);
+  }
+  tick();
+  return { stop(){ active=false; } };
+}
+
+// ─── Estado de conexiones ─────────────────────────────
+// hostPcs: { clientId → RTCPeerConnection }  (solo host)
+// hostChannels: { clientId → RTCDataChannel } (solo host)
+// clientPc: RTCPeerConnection (solo cliente)
+// clientChannel: RTCDataChannel (solo cliente)
+let hostPcs = {}, hostChannels = {};
+let clientPc = null, clientChannel = null;
+let _hostPollers = {}; // clientId → poller de señalización
+let _hostRoomPoller = null; // poller para nuevos clientes en sala
+let _clientPoller = null;
+let _hostHeartbeat = null;
+
+// ─── HOST FLOW ────────────────────────────────────────
 function showHostRoom(){
   isHost = true;
   document.getElementById('lobby').style.display='none';
@@ -543,70 +544,136 @@ function showHostRoom(){
   document.getElementById('room-code').textContent = 'Conectando...';
 
   roomCode = genCode();
-  peer = new Peer(PEER_CFG);
-  peer.on('open', async id => {
-    myId = id;
-    await registerRoom(roomCode, id);
-    document.getElementById('room-code').textContent = roomCode;
-    myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
-    // El host NO se agrega a players[] — es solo espectador, no compite
-    refreshHostList();
-    startHostHeartbeat();
+  myId = 'host-' + genId();
+  myName = 'HOST'; myColorIdx = 0; myColor = CAR_COLORS[0];
+
+  // Registrar sala en Firebase (sin peerId dependiente de PeerJS)
+  fbPut(`rooms/${roomCode}`, { hostId: myId, ts: Date.now(), open: true });
+
+  // Limpiar sala al cerrar
+  window.addEventListener('beforeunload', ()=>{
+    navigator.sendBeacon(`${FIREBASE_URL}/rooms/${roomCode}.json`,
+      JSON.stringify({ open: false, ts: Date.now() }));
   });
-  peer.on('disconnected', () => {
-    // El servidor de señalización cerró la conexión — reconectar automáticamente
-    if(peer && !peer.destroyed && !gameRunning){
-      document.getElementById('room-code').textContent = 'Reconectando...';
-      setTimeout(()=>{
-        try { peer.reconnect(); } catch(e){}
-      }, 1500);
+
+  document.getElementById('room-code').textContent = roomCode;
+  refreshHostList();
+
+  // Heartbeat: mantiene ts actualizado y sala marcada open
+  _hostHeartbeat = setInterval(()=>{
+    fbPatch(`rooms/${roomCode}`, { ts: Date.now(), open: true });
+  }, 20000);
+
+  // Escuchar nuevos clientes que quieran unirse
+  _hostRoomPoller = fbPoll(`rooms/${roomCode}/clients`, 2000, async (clientsSnap)=>{
+    if(!clientsSnap || typeof clientsSnap !== 'object') return;
+    for(const [clientId, clientData] of Object.entries(clientsSnap)){
+      if(hostPcs[clientId]) continue; // ya conectado o en proceso
+      if(!clientData || !clientData.offer) continue;
+      hostAcceptClient(clientId, clientData.offer);
     }
   });
-  peer.on('error', e => {
-    showErr('Error PeerJS: ' + e.type);
-    if(e.type === 'network' || e.type === 'server-error'){
-      setTimeout(()=>{ try { peer.reconnect(); } catch(err){} }, 2000);
-    }
-  });
-  peer.on('connection', onHostConnection);
 }
 
+async function hostAcceptClient(clientId, offerSDP){
+  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+  if(Object.keys(hostChannels).length >= maxPlayers){
+    await fbPut(`rooms/${roomCode}/clients/${clientId}/answer`, { rejected: true });
+    return;
+  }
 
+  const pc = new RTCPeerConnection(ICE_CFG);
+  hostPcs[clientId] = pc;
 
-function onHostConnection(conn){
-  const pid = conn.peer;
-  conn.on('open', ()=>{
-    maxPlayers = parseInt(document.getElementById('max-players-sel').value);
-    if(Object.keys(clientConns).length >= maxPlayers - 1){
-      conn.send({ type:'rejected', reason:'Sala llena' });
-      conn.close(); return;
+  // Recopilar ICE candidates del host y escribirlos en Firebase
+  const hostIceCandidates = [];
+  pc.onicecandidate = e => {
+    if(e.candidate) hostIceCandidates.push(e.candidate.toJSON());
+  };
+  pc.onicegatheringstatechange = async ()=>{
+    if(pc.iceGatheringState === 'complete'){
+      await fbPatch(`rooms/${roomCode}/clients/${clientId}`, {
+        hostIce: hostIceCandidates
+      });
     }
-    clientConns[pid] = conn;
-    const usedIdx = Object.values(players).map(p=>p.colorIdx);
-    let ci = 0; while(usedIdx.includes(ci)) ci++;
-    players[pid] = { id: pid, name: randomName(), color: CAR_COLORS[ci%CAR_COLORS.length], colorIdx: ci };
-    conn.send({ type:'welcome', playerId: pid, name: players[pid].name,
-                color: players[pid].color, colorIdx: ci, players: players });
-    broadcastToClients({ type:'players-update', players });
-    refreshHostList();
+  };
+
+  // Canal de datos
+  pc.ondatachannel = e => {
+    const ch = e.channel;
+    ch.onopen = ()=>{
+      hostChannels[clientId] = ch;
+      onHostChannelOpen(clientId, ch);
+    };
+    ch.onmessage = ev => {
+      try { handleHostData(clientId, JSON.parse(ev.data)); } catch(err){}
+    };
+    ch.onclose = ()=> onHostChannelClose(clientId);
+  };
+
+  // Aplicar offer del cliente
+  await pc.setRemoteDescription({ type:'offer', sdp: offerSDP });
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  // Escribir answer en Firebase para que el cliente la lea
+  await fbPatch(`rooms/${roomCode}/clients/${clientId}`, {
+    answer: pc.localDescription.sdp
   });
-  conn.on('data', d => handleHostData(pid, d));
-  conn.on('close', ()=>{
-    delete clientConns[pid];
-    delete players[pid];
-    delete remoteStates[pid];
-    broadcastToClients({ type:'players-update', players });
-    refreshHostList();
+
+  // Leer ICE candidates del cliente cuando lleguen
+  let clientIcePoller = fbPoll(`rooms/${roomCode}/clients/${clientId}/clientIce`, 1500, candidates=>{
+    if(!Array.isArray(candidates)) return;
+    candidates.forEach(c=>{ try{ pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} });
+    clientIcePoller.stop();
   });
+  _hostPollers[clientId] = clientIcePoller;
+}
+
+function onHostChannelOpen(clientId, ch){
+  const usedIdx = Object.values(players).map(p=>p.colorIdx);
+  let ci = 1; while(usedIdx.includes(ci)) ci++; // índice 0 reservado para host
+  players[clientId] = {
+    id: clientId,
+    name: randomName(),
+    color: CAR_COLORS[ci % CAR_COLORS.length],
+    colorIdx: ci
+  };
+  sendToClient(clientId, {
+    type:'welcome', playerId: clientId,
+    name: players[clientId].name,
+    color: players[clientId].color,
+    colorIdx: ci,
+    players
+  });
+  broadcastToClients({ type:'players-update', players });
+  refreshHostList();
+}
+
+function onHostChannelClose(clientId){
+  if(hostPcs[clientId]){ try{ hostPcs[clientId].close(); }catch(e){} delete hostPcs[clientId]; }
+  delete hostChannels[clientId];
+  if(_hostPollers[clientId]){ _hostPollers[clientId].stop(); delete _hostPollers[clientId]; }
+  delete players[clientId];
+  delete remoteStates[clientId];
+  broadcastToClients({ type:'players-update', players });
+  refreshHostList();
+}
+
+function sendToClient(clientId, msg){
+  const ch = hostChannels[clientId];
+  if(ch && ch.readyState==='open'){
+    try{ ch.send(JSON.stringify(msg)); }catch(e){}
+  }
 }
 
 function broadcastToClients(msg){
-  Object.values(clientConns).forEach(c=>{ try{ c.send(msg); }catch(e){} });
+  Object.keys(hostChannels).forEach(id=> sendToClient(id, msg));
 }
 
 function handleHostData(pid, d){
   if(d.type==='name-change'){
-    if(players[pid]){ players[pid].name = d.name; }
+    if(players[pid]) players[pid].name = d.name;
     broadcastToClients({ type:'players-update', players });
     refreshHostList();
   }
@@ -614,32 +681,37 @@ function handleHostData(pid, d){
     remoteStates[pid] = d.state;
     if(d.state.laps >= 5 && !d.state.finished) d.state.finished = true;
     checkMultiFinish(pid, d.state);
-    // Relay este estado a TODOS los demás clientes (para que se vean entre sí)
-    Object.entries(clientConns).forEach(([otherPid, conn])=>{
-      if(otherPid === pid) return; // no enviar de vuelta al mismo
-      try { conn.send({ type:'relay-state', fromId: pid, state: d.state }); } catch(e){}
+    Object.keys(hostChannels).forEach(otherId=>{
+      if(otherId === pid) return;
+      sendToClient(otherId, { type:'relay-state', fromId: pid, state: d.state });
     });
   }
 }
 
+function hostSelectTrack(n, el){
+  selectedTrack = n;
+  document.querySelectorAll('.ts-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+}
+
 function hostStartGame(){
   maxPlayers = parseInt(document.getElementById('max-players-sel').value);
-  const msg = { type:'start', track: selectedTrack, players };
-  broadcastToClients(msg);
+  broadcastToClients({ type:'start', track: selectedTrack, players });
   launchGame(selectedTrack, players);
 }
 
-// ═══════════════════════════════════════════════════════
-// CLIENT FLOW
-// ═══════════════════════════════════════════════════════
 function hostBackToLobby(){
-  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
-  if(peer){ peer.destroy(); peer = null; }
-  players = {}; remoteStates = {}; clientConns = {}; isHost = false;
+  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat=null; }
+  if(_hostRoomPoller){ _hostRoomPoller.stop(); _hostRoomPoller=null; }
+  Object.values(_hostPollers).forEach(p=>p.stop()); _hostPollers={};
+  Object.values(hostPcs).forEach(pc=>{ try{ pc.close(); }catch(e){} }); hostPcs={};
+  hostChannels={}; players={}; remoteStates={}; isHost=false;
+  fbPatch(`rooms/${roomCode}`, { open: false });
   document.getElementById('host-room').style.display='none';
   document.getElementById('lobby').style.display='flex';
 }
 
+// ─── CLIENT FLOW ──────────────────────────────────────
 async function joinRoom(){
   const code = document.getElementById('join-code-input').value.trim().toUpperCase();
   const nameVal = document.getElementById('join-name-input').value.trim();
@@ -649,96 +721,105 @@ async function joinRoom(){
   document.getElementById('client-room').style.display='flex';
   document.getElementById('client-status').textContent = 'Buscando sala...';
 
-  // Buscar el peer ID real del host en Firebase
-  let hostPeerId = null;
-  try {
-    const r = await fetch(`${FIREBASE_URL}/rooms/${code}.json`);
-    if(r.ok){
-      const d = await r.json();
-      if(d && d.peerId && d.peerId.length > 4 && Date.now() - d.ts < 90000){
-        hostPeerId = d.peerId;
-      }
-    }
-  } catch(e){}
-
-  if(!hostPeerId){
-    showErr('Sala no encontrada. Verifica el código.');
+  // Verificar que la sala existe y está abierta
+  const roomData = await fbGet(`rooms/${code}`);
+  if(!roomData || !roomData.open || Date.now() - roomData.ts > 60000){
+    showErr('Sala no encontrada o expirada. Pide al host que cree una nueva.');
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
     return;
   }
 
   roomCode = code;
+  myId = 'client-' + genId();
   document.getElementById('client-status').textContent = 'Conectando al host...';
+  if(nameVal) document.getElementById('name-input').value = nameVal;
 
-  peer = new Peer(PEER_CFG);
+  // Crear PeerConnection
+  clientPc = new RTCPeerConnection(ICE_CFG);
 
-  // Timeout de seguridad: si en 12s no se conecta, volver al lobby
-  let _joinTimeout = setTimeout(()=>{
-    if(hostConn && hostConn.open) return; // ya conectó, no hacer nada
-    showErr('No se pudo conectar. La sala puede haber expirado. Pide al host que cree una nueva sala.');
-    if(peer){ peer.destroy(); peer = null; }
+  // Crear canal de datos (el cliente lo inicia)
+  clientChannel = clientPc.createDataChannel('game', { ordered: false, maxRetransmits: 2 });
+  clientChannel.onopen = ()=>{
+    document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
+    if(nameVal) sendToHost({ type:'name-change', name: nameVal });
+  };
+  clientChannel.onmessage = ev=>{
+    try{ handleClientData(JSON.parse(ev.data)); }catch(e){}
+  };
+  clientChannel.onclose = ()=> showErr('Desconectado del host');
+
+  // Recopilar ICE candidates del cliente
+  const clientIceCandidates = [];
+  clientPc.onicecandidate = e=>{
+    if(e.candidate) clientIceCandidates.push(e.candidate.toJSON());
+  };
+  clientPc.onicegatheringstatechange = async ()=>{
+    if(clientPc.iceGatheringState === 'complete'){
+      await fbPatch(`rooms/${code}/clients/${myId}`, { clientIce: clientIceCandidates });
+    }
+  };
+
+  // Crear offer y escribirla en Firebase
+  const offer = await clientPc.createOffer();
+  await clientPc.setLocalDescription(offer);
+  await fbPut(`rooms/${code}/clients/${myId}`, { offer: offer.sdp, ts: Date.now() });
+
+  // Esperar answer del host (polling)
+  let answered = false;
+  let _timeout = setTimeout(()=>{
+    if(answered) return;
+    _clientPoller && _clientPoller.stop();
+    showErr('El host no respondió. Verifica el código o pide al host que recree la sala.');
+    if(clientPc){ try{ clientPc.close(); }catch(e){} clientPc=null; }
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
-  }, 12000);
+  }, 15000);
 
-  peer.on('open', id => {
-    myId = id;
-    hostConn = peer.connect(hostPeerId, { reliable: true });
-
-    // Timeout adicional si el peer abre pero la conexión al host no
-    let _connTimeout = setTimeout(()=>{
-      if(hostConn && hostConn.open) return;
-      clearTimeout(_joinTimeout);
-      showErr('El host no responde. La sala expiró. Pide al host que cree una nueva sala.');
-      if(peer){ peer.destroy(); peer = null; }
+  _clientPoller = fbPoll(`rooms/${code}/clients/${myId}`, 1500, async data=>{
+    if(answered) return;
+    if(data.rejected){
+      answered=true; clearTimeout(_timeout); _clientPoller.stop();
+      showErr('No se pudo unir: sala llena');
       document.getElementById('client-room').style.display='none';
       document.getElementById('lobby').style.display='flex';
-    }, 10000);
-
-    hostConn.on('open', ()=>{
-      clearTimeout(_joinTimeout);
-      clearTimeout(_connTimeout);
-      document.getElementById('client-status').textContent = '✓ Conectado. Esperando al host...';
-      // Enviar nombre inmediatamente si el usuario escribió uno
-      if(nameVal) hostConn.send({ type:'name-change', name: nameVal });
-    });
-    hostConn.on('data', d => handleClientData(d));
-    hostConn.on('close', ()=>showErr('Desconectado del host'));
-    hostConn.on('error', ()=>showErr('Error de conexión con el host'));
+      return;
+    }
+    if(data.answer){
+      answered=true; clearTimeout(_timeout); _clientPoller.stop();
+      await clientPc.setRemoteDescription({ type:'answer', sdp: data.answer });
+      // Aplicar ICE del host si ya llegaron
+      if(data.hostIce && Array.isArray(data.hostIce)){
+        data.hostIce.forEach(c=>{ try{ clientPc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){} });
+      }
+    }
   });
-  peer.on('error', e => {
-    showErr('Error al conectar. (' + e.type + ')');
-    document.getElementById('client-room').style.display='none';
-    document.getElementById('lobby').style.display='flex';
-  });
+}
 
-  if(nameVal) document.getElementById('name-input').value = nameVal;
+function sendToHost(msg){
+  if(clientChannel && clientChannel.readyState==='open'){
+    try{ clientChannel.send(JSON.stringify(msg)); }catch(e){}
+  }
 }
 
 function confirmName(){
   const n = document.getElementById('name-input').value.trim();
   if(!n) return;
   myName = n;
-  if(hostConn && hostConn.open){
-    hostConn.send({ type:'name-change', name: myName });
-    document.getElementById('client-status').textContent = '✓ Nombre guardado: ' + myName;
-  }
+  sendToHost({ type:'name-change', name: myName });
+  document.getElementById('client-status').textContent = '✓ Nombre guardado: ' + myName;
 }
 
 function handleClientData(d){
   if(d.type==='rejected'){ showErr('No se pudo unir: ' + d.reason); return; }
   if(d.type==='welcome'){
     myId = d.playerId;
-    // Respetar el nombre que el usuario escribió; solo usar el random si no escribió nada
     const typedName = document.getElementById('name-input').value.trim();
     myName = typedName || d.name;
-    myColor = d.color;
-    myColorIdx = d.colorIdx;
+    myColor = d.color; myColorIdx = d.colorIdx;
     players = d.players;
     document.getElementById('name-input').value = myName;
-    // Si el usuario tenía nombre propio, confirmarlo al host
-    if(typedName) hostConn.send({ type:'name-change', name: myName });
+    if(typedName) sendToHost({ type:'name-change', name: myName });
     refreshClientList();
   }
   if(d.type==='players-update'){
@@ -747,8 +828,7 @@ function handleClientData(d){
     refreshClientList();
   }
   if(d.type==='start'){
-    selectedTrack = d.track;
-    players = d.players;
+    selectedTrack = d.track; players = d.players;
     launchGame(selectedTrack, players);
   }
   if(d.type==='relay-state'){
@@ -763,10 +843,11 @@ function handleClientData(d){
     finishers = d.finishers;
     if(!podiumShown) showPodium();
   }
-  if(d.type==='back-to-lobby'){
-    resetToLobby();
-  }
+  if(d.type==='back-to-lobby') resetToLobby();
 }
+
+// ─── sendMyState: usar canal correcto según rol ────────
+// usa sendToHost() o broadcastToClients() según el rol
 
 // ═══════════════════════════════════════════════════════
 // LAUNCH GAME
@@ -874,9 +955,7 @@ function sendMyState(){
   if(now - stateThrottle < 50) return; // ~20fps
   stateThrottle = now;
   const state = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished, fuel: car.fuel };
-  if(hostConn && hostConn.open){
-    hostConn.send({ type:'state-update', state });
-  }
+  sendToHost({ type:'state-update', state });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -930,13 +1009,19 @@ function backToLobby(){
 
 function resetToLobby(){
   if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
+  if(_hostRoomPoller){ _hostRoomPoller.stop(); _hostRoomPoller = null; }
+  if(_clientPoller){ _clientPoller.stop(); _clientPoller = null; }
+  Object.values(_hostPollers).forEach(p=>p.stop()); _hostPollers = {};
+  Object.values(hostPcs).forEach(pc=>{ try{ pc.close(); }catch(e){} }); hostPcs = {};
+  hostChannels = {};
+  if(clientPc){ try{ clientPc.close(); }catch(e){} clientPc = null; }
+  clientChannel = null;
   document.getElementById('podium-screen').style.display='none';
   document.getElementById('game-outer').style.display='none';
   document.getElementById('host-room').style.display='none';
   document.getElementById('client-room').style.display='none';
   gameRunning = false;
-  if(peer){ peer.destroy(); peer = null; }
-  players = {}; remoteStates = {}; finishers = []; clientConns = {}; hostConn = null;
+  players = {}; remoteStates = {}; finishers = [];
   isHost = false;
   document.getElementById('lobby').style.display='flex';
 }
