@@ -774,13 +774,8 @@ async function joinRoom(){
   const iceCfg = await getIceCfg();
   clientPc=new RTCPeerConnection(iceCfg);
 
-  clientPc.oniceconnectionstatechange=()=>{
-    const s=clientPc.iceConnectionState;
-    console.log('[ICE]',s);
-    if(s==='checking')    setStatus('Estableciendo conexión...');
-    if(s==='connected'||s==='completed') setStatus('✓ Conectado...');
-    if(s==='disconnected'){ try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){} }
-    if(s==='failed'){      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){} }
+  clientPc.onconnectionstatechange=()=>{
+    console.log('[connState]', clientPc.connectionState);
   };
 
   // 3. Canal de datos
@@ -843,10 +838,32 @@ async function joinRoom(){
       connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
       try{
         await clientPc.setRemoteDescription({type:'answer',sdp:data.answer});
-        if(Array.isArray(data.hostIce)){
+        // Aplicar ICE del host que ya llegaron
+        if(Array.isArray(data.hostIce) && data.hostIce.length>0){
           data.hostIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
         }
         setStatus('Estableciendo conexión...');
+
+        // Seguir recibiendo ICE del host por trickle (llegan después del answer)
+        let lastHostIceCount = (data.hostIce||[]).length;
+        const hostIcePoller = setInterval(async()=>{
+          if(!clientPc){ clearInterval(hostIcePoller); return; }
+          const ice = await fbGet(`rooms/${code}/clients/${myId}/hostIce`);
+          if(Array.isArray(ice) && ice.length > lastHostIceCount){
+            const newIce = ice.slice(lastHostIceCount);
+            lastHostIceCount = ice.length;
+            newIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
+            console.log('[CLIENT] Nuevos ICE del host:', newIce.length);
+          }
+        }, 800);
+        // Parar cuando conecte
+        clientPc.oniceconnectionstatechange=()=>{
+          const s=clientPc.iceConnectionState;
+          console.log('[ICE]',s);
+          if(s==='connected'||s==='completed'){ clearInterval(hostIcePoller); setStatus('✓ Conectado...'); }
+          if(s==='disconnected'){ try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){} }
+          if(s==='failed'){ clearInterval(hostIcePoller); try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){} }
+        };
       } catch(err){
         console.warn('setRemoteDescription error',err);
       }
