@@ -476,57 +476,28 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // 2. Copia username y credential de "TURN Credentials"
 // 3. Reemplaza METERED_USER y METERED_CRED abajo
 // ═══════════════════════════════════════════════════════
-// ── TURN servers ─────────────────────────────────────────────────────────────
-// Se obtienen credenciales frescas desde la API de Metered.ca antes de
-// cada conexión, garantizando que no expiren. Fallback a servidores estáticos.
-// Metered.ca free tier: 500MB/mes de relay, suficiente para el juego.
-const METERED_API = 'https://triviagame.metered.live/api/v1/turn/credentials?apiKey=e5c4f7a9d2b1e3c4f7a9d2b1e3c4f7a9';
+const METERED_USER = 'openrelayproject';
+const METERED_CRED = 'openrelayproject';
 
-// Credenciales de respaldo estáticas (múltiples para redundancia)
-const ICE_FALLBACK = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  // freestun — TURN público sin cuenta
-  { urls: 'turn:freestun.net:3478',  username:'free', credential:'free' },
-  { urls: 'turns:freestun.net:5349', username:'free', credential:'free' },
-  // numb.viagenie — clásico y estable
-  { urls: 'turn:numb.viagenie.ca:3478', username:'webrtc@live.com', credential:'muazkh' },
-  // openrelay puerto 80 (atraviesa la mayoría de firewalls móviles)
-  { urls: 'turn:openrelay.metered.ca:80',  username:'openrelayproject', credential:'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
-  { urls: 'turns:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
-];
-
-// Obtener ICE config con credenciales frescas; si falla, usar fallback
-async function getIceCfg(){
-  try{
-    const r = await Promise.race([
-      fetch(METERED_API),
-      new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),3000))
-    ]);
-    if(r.ok){
-      const servers = await r.json();
-      if(Array.isArray(servers) && servers.length > 0){
-        console.log('[ICE] Credenciales Metered OK:', servers.length, 'servidores');
-        return {
-          iceServers: [
-            { urls:'stun:stun.l.google.com:19302' },
-            { urls:'stun:stun.cloudflare.com:3478' },
-            ...servers
-          ],
-          iceCandidatePoolSize: 12,
-          iceTransportPolicy: 'all',
-        };
-      }
-    }
-  } catch(e){ console.warn('[ICE] Metered API falló, usando fallback:', e.message); }
-  return { iceServers: ICE_FALLBACK, iceCandidatePoolSize: 12, iceTransportPolicy: 'all' };
-}
-
-// ICE_CFG se carga dinámicamente en showHostRoom y joinRoom
-let ICE_CFG = { iceServers: ICE_FALLBACK, iceCandidatePoolSize: 12, iceTransportPolicy: 'all' };
+const ICE_CFG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // TURN #1 — freestun (sin cuenta, muy confiable)
+    { urls: 'turn:freestun.net:3478',          username:'free', credential:'free' },
+    { urls: 'turns:freestun.net:5349',         username:'free', credential:'free' },
+    { urls: 'turn:freestun.net:3479',          username:'free', credential:'free' },
+    // TURN #2 — expressturn
+    { urls: 'turn:relay1.expressturn.com:3478', username:'efQCBH5NWHQ4BI2FMR', credential:'rRJpzMHvVXNqxRrU' },
+    // TURN #3 — openrelay metered
+    { urls: 'turn:openrelay.metered.ca:80',              username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443',             username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turns:openrelay.metered.ca:443',            username:METERED_USER, credential:METERED_CRED },
+  ],
+  iceCandidatePoolSize: 10,
+  iceTransportPolicy: 'all',
+};
 
 function genCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -594,16 +565,12 @@ let _clientPoller=null;
 let _hostHeartbeat=null;
 
 // ─── HOST FLOW ────────────────────────────────────────
-async function showHostRoom(){
+function showHostRoom(){
   unlockAudio();
   isHost=true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
   document.getElementById('room-code').textContent='Conectando...';
-
-  // Cargar ICE config fresco antes de aceptar clientes
-  ICE_CFG = await getIceCfg();
-  console.log('[HOST] ICE config listo:', ICE_CFG.iceServers.length, 'servidores');
 
   roomCode=genCode();
   myId='host-'+genId();
@@ -619,19 +586,10 @@ async function showHostRoom(){
   document.getElementById('room-code').textContent=roomCode;
   refreshHostList();
 
-  // Heartbeat cada 15s para mantener la sala viva en Firebase
+  // Heartbeat cada 15s para mantener la sala viva
   _hostHeartbeat=setInterval(()=>{
     fbMerge(`rooms/${roomCode}`,{ts:Date.now(),open:true});
-    // Verificar clientes silenciosos: si no mandan nada en 20s, los expulsamos
-    const now = Date.now();
-    Object.keys(hostChannels).forEach(cid=>{
-      const last = _clientLastSeen[cid] || now;
-      if(now - last > 20000){
-        console.log('[HOST] Cliente silencioso >20s, expulsando:', cid);
-        onHostChannelClose(cid);
-      }
-    });
-  },10000);
+  },15000);
 
   // Escuchar nuevos clientes
   _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,1500, async(clientsSnap)=>{
@@ -654,29 +612,7 @@ async function hostAcceptClient(clientId, offerSDP){
   const pc=new RTCPeerConnection(ICE_CFG);
   hostPcs[clientId]=pc;
 
-  pc.oniceconnectionstatechange=()=>{
-    const s = pc.iceConnectionState;
-    console.log('[HOST ICE]',clientId, s);
-    // Si la conexión falla o se cierra de forma abrupta, eliminar al jugador
-    if(s==='failed' || s==='closed'){
-      console.log('[HOST] Cliente caído por ICE:', clientId);
-      onHostChannelClose(clientId);
-    }
-    // disconnected puede ser temporal (renegociación), esperamos 8s antes de expulsar
-    if(s==='disconnected'){
-      clearTimeout(pc._discTimer);
-      pc._discTimer = setTimeout(()=>{
-        if(pc.iceConnectionState==='disconnected' || pc.iceConnectionState==='failed'){
-          console.log('[HOST] Cliente sin respuesta 8s:', clientId);
-          onHostChannelClose(clientId);
-        }
-      }, 8000);
-    }
-    // Si se recupera, cancelar el timer
-    if(s==='connected'||s==='completed'){
-      clearTimeout(pc._discTimer);
-    }
-  };
+  pc.oniceconnectionstatechange=()=>console.log('[HOST ICE]',clientId,pc.iceConnectionState);
 
   // Acumular ICE del host
   const hIce=[];
@@ -742,26 +678,12 @@ function onHostChannelOpen(clientId){
 }
 
 function onHostChannelClose(clientId){
-  // Idempotente: si ya fue eliminado, no hacer nada
-  if(!players[clientId] && !hostPcs[clientId] && !hostChannels[clientId]) return;
-  console.log('[HOST] Eliminando jugador:', clientId);
-  if(hostPcs[clientId]){
-    clearTimeout(hostPcs[clientId]._discTimer);
-    try{hostPcs[clientId].close();}catch(e){}
-    delete hostPcs[clientId];
-  }
-  if(hostChannels[clientId]){
-    try{hostChannels[clientId].close();}catch(e){}
-    delete hostChannels[clientId];
-  }
+  if(hostPcs[clientId]){try{hostPcs[clientId].close();}catch(e){} delete hostPcs[clientId];}
+  delete hostChannels[clientId];
   if(_hostPollers[clientId]){_hostPollers[clientId].stop();delete _hostPollers[clientId];}
-  // Solo notificar si el jugador existía en la lista
-  if(players[clientId]){
-    delete players[clientId];
-    delete remoteStates[clientId];
-    broadcastToClients({type:'players-update',players});
-    refreshHostList();
-  }
+  delete players[clientId]; delete remoteStates[clientId];
+  broadcastToClients({type:'players-update',players});
+  refreshHostList();
 }
 
 function sendToClient(clientId,msg){
@@ -770,29 +692,24 @@ function sendToClient(clientId,msg){
 }
 function broadcastToClients(msg){ Object.keys(hostChannels).forEach(id=>sendToClient(id,msg)); }
 
-// Registro de último ping por cliente
-const _clientLastSeen = {};
-
 function handleHostData(pid,d){
-  // Actualizar timestamp de último mensaje
-  _clientLastSeen[pid] = Date.now();
-
-  if(d.type==='ping'){
-    // Responder con pong inmediatamente
-    sendToClient(pid, {type:'pong'});
-    return;
-  }
   if(d.type==='name-change'){
     if(players[pid]) players[pid].name=d.name;
     broadcastToClients({type:'players-update',players}); refreshHostList();
   }
-  if(d.type==='state-update'){
-    remoteStates[pid]=d.state;
-    if(d.state.laps>=5&&!d.state.finished) d.state.finished=true;
-    checkMultiFinish(pid,d.state);
+  if(d.type==='state-update'||d.t==='s'){
+    // Soportar tanto formato legacy como comprimido
+    const state = d.t==='s'
+      ? { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f }
+      : d.state;
+    remoteStates[pid]=state;
+    if(state.laps>=5&&!state.finished) state.finished=true;
+    checkMultiFinish(pid,state);
+    // Relay también comprimido para ahorrar ancho de banda en el host
+    const relay = { t:'r', id:pid, x:state.x, y:state.y, a:state.angle, l:state.laps, f:state.finished?1:0 };
     Object.keys(hostChannels).forEach(otherId=>{
       if(otherId===pid) return;
-      sendToClient(otherId,{type:'relay-state',fromId:pid,state:d.state});
+      sendToClient(otherId, relay);
     });
   }
 }
@@ -839,10 +756,6 @@ async function joinRoom(){
   roomCode=code;
   myId='client-'+genId();
   if(nameVal) document.getElementById('name-input').value=nameVal;
-  setStatus('[1/5] Obteniendo servidores de conexión...');
-
-  // Cargar ICE config fresco
-  ICE_CFG = await getIceCfg();
   setStatus('[1/5] Creando conexión WebRTC...');
 
   clientPc=new RTCPeerConnection(ICE_CFG);
@@ -892,13 +805,6 @@ async function joinRoom(){
   clientChannel.onopen=()=>{
     setStatus('✓ Conectado — esperando al host...');
     if(nameVal) sendToHost({type:'name-change',name:nameVal});
-    // Ping al host cada 5s para que sepa que seguimos vivos
-    const _pingInterval = setInterval(()=>{
-      if(!clientChannel || clientChannel.readyState !== 'open'){
-        clearInterval(_pingInterval); return;
-      }
-      sendToHost({type:'ping'});
-    }, 5000);
   };
   clientChannel.onmessage=ev=>{try{handleClientData(JSON.parse(ev.data));}catch(e){}};
   clientChannel.onclose=()=>showErr('Desconectado del host');
@@ -1006,6 +912,11 @@ function handleClientData(d){
   if(d.type==='start'){ selectedTrack=d.track; players=d.players; launchGame(selectedTrack,players); }
   if(d.type==='relay-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
   if(d.type==='host-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
+  // Formato relay comprimido del host
+  if(d.t==='r'){
+    const state = { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f };
+    remoteStates[d.id]=state; checkMultiFinish(d.id,state);
+  }
   if(d.type==='podium'){ finishers=d.finishers; if(!podiumShown) showPodium(); }
   if(d.type==='back-to-lobby') resetToLobby();
 }
@@ -1079,19 +990,25 @@ function launchSpectator(){
 }
 
 let _lastSpectatorTime = 0;
+let _specSkip = 0;
 function spectatorLoop(ts){
   if(!gameRunning) return;
   _lastSpectatorTime = ts;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  drawTrack();
-  drawObstacles();
-  // Dibujar todos los carros remotos
-  Object.entries(remoteStates).forEach(([pid, s])=>{
-    const p = players[pid] || { name:'?', color:'#888' };
-    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
-  });
-  drawParticles();
-  updateRankingHUD();
+  // Espectador solo necesita ~20fps, no 60fps
+  _specSkip = (_specSkip+1)%3;
+  if(_specSkip===0){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawTrack();
+    drawObstacles();
+    // El espectador usa distancia ficticia (centro de pantalla) para LOD
+    car.x = canvas.width/2; car.y = canvas.height/2;
+    Object.entries(remoteStates).forEach(([pid, s])=>{
+      const p = players[pid] || { name:'?', color:'#888' };
+      drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+    });
+    drawParticles();
+    updateRankingHUD();
+  }
   requestAnimationFrame(spectatorLoop);
 }
 
@@ -1114,14 +1031,22 @@ function checkMultiFinish(pid, state){
 // SEND MY STATE
 // ═══════════════════════════════════════════════════════
 let stateThrottle = 0;
+// Número de jugadores actuales para throttle adaptativo
+function _playerCount(){ return Object.keys(players).length; }
+
 function sendMyState(){
-  // El host es espectador, no tiene carro → no envía estado de carro
   if(isHost) return;
   const now = Date.now();
-  if(now - stateThrottle < 50) return; // ~20fps
+  // Throttle adaptativo: más jugadores → menos frecuencia de envío
+  // ≤5 jugadores: 15fps (67ms) | ≤10: 10fps (100ms) | ≤20: 8fps (125ms) | >20: 6fps (167ms)
+  const pc = _playerCount();
+  const interval = pc <= 5 ? 67 : pc <= 10 ? 100 : pc <= 20 ? 125 : 167;
+  if(now - stateThrottle < interval) return;
   stateThrottle = now;
-  const state = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished, fuel: car.fuel };
-  sendToHost({ type:'state-update', state });
+  // Payload comprimido: coordenadas redondeadas a 1 decimal, ángulo a 2 decimales
+  // De ~120 bytes a ~45 bytes por mensaje
+  sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
+    a:Math.round(car.angle*100)/100, l:car.laps, f:myFinished?1:0 });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1541,16 +1466,42 @@ function drawCar(x,y,angle,color,alpha,showFuel){
   ctx.restore();
 }
 
-// Draw a remote car with name label
+// Draw a remote car — LOD (Level of Detail) por distancia al jugador local
 function drawRemoteCar(x, y, angle, color, name){
+  // Calcular distancia al carro local
+  const dx = x - car.x, dy = y - car.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+
+  if(dist > 500){
+    // Muy lejos: solo un punto de color (1 draw call, 0 texto)
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  if(dist > 220){
+    // Mediana distancia: rectángulo simple sin detalles ni texto
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.translate(x, y); ctx.rotate(angle + Math.PI/2);
+    ctx.fillStyle = color;
+    ctx.fillRect(-6, -11, 12, 22);
+    ctx.restore();
+    return;
+  }
+
+  // Cerca: carro completo con nombre
   drawCar(x, y, angle, color, 0.45, false);
-  // Name label
   ctx.save();
-  ctx.globalAlpha = 0.6;
+  ctx.globalAlpha = 0.65;
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
   ctx.fillStyle = color;
-  ctx.fillText(name, x, y - 18);
+  // Nombre abreviado a 8 chars para no saturar la pantalla con muchos jugadores
+  ctx.fillText(name.length > 8 ? name.slice(0,7)+'…' : name, x, y - 18);
   ctx.restore();
 }
 
@@ -1725,28 +1676,45 @@ function closeTrivia(){ document.getElementById('trivia-panel').style.display='n
 
 // ─── GAME LOOP ────────────────────────────────────────
 let _lastFrameTime = 0;
+let _renderSkip = 0; // para skip de frames de render
 function gameLoop(ts){
   if(!gameRunning) return;
   const dt = _lastFrameTime ? Math.min((ts - _lastFrameTime) / (1000/60), 3) : 1;
   _lastFrameTime = ts;
 
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  drawTrack();
-  drawObstacles();
-
-  // Draw remote cars (semi-transparent, behind my car)
-  Object.entries(remoteStates).forEach(([pid, s])=>{
-    if(pid === myId) return;
-    const p = players[pid] || { name: '?', color: '#888' };
-    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
-  });
-
-  drawParticles();
-  drawCar(car.x, car.y, car.angle, myColor, 1, true);
+  // Lógica siempre a 60fps (posición, colisiones, red)
   updateCar(dt);
   sendMyState();
-  updateHUD();
-  updateRankingHUD();
+
+  // Render adaptativo: con >8 jugadores, saltar 1 de cada 2 frames de dibujado
+  // Esto libera ~50% de GPU/CPU para la lógica de red sin afectar la jugabilidad
+  const pc = _playerCount();
+  _renderSkip = (_renderSkip + 1) % (pc > 8 ? 2 : 1);
+  if(_renderSkip === 0){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawTrack();
+    drawObstacles();
+
+    // Ordenar remotos por distancia para dibujar los más cercanos al final (encima)
+    const remoteList = Object.entries(remoteStates)
+      .filter(([pid])=> pid !== myId)
+      .map(([pid, s])=>{
+        const dx=s.x-car.x, dy=s.y-car.y;
+        return { pid, s, dist: dx*dx+dy*dy };
+      })
+      .sort((a,b)=> b.dist - a.dist); // lejanos primero
+
+    remoteList.forEach(({pid, s})=>{
+      const p = players[pid] || { name: '?', color: '#888' };
+      drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+    });
+
+    drawParticles();
+    drawCar(car.x, car.y, car.angle, myColor, 1, true);
+    updateHUD();
+    updateRankingHUD();
+  }
+
   requestAnimationFrame(gameLoop);
 }
 
