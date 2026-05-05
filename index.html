@@ -249,11 +249,11 @@ canvas { display: block; width: 820px; height: 430px; }
   <p class="sub">MULTIJUGADOR</p>
   <div class="lobby-card">
     <h2>¿CÓMO QUIERES JUGAR?</h2>
-    <button class="lbtn" onclick="showHostRoom()">🏁 CREAR SALA (HOST)</button>
+    <button class="lbtn" onclick="unlockAudio();showHostRoom()">🏁 CREAR SALA (HOST)</button>
     <div class="lobby-or">─── ó ───</div>
     <input class="linput" id="join-code-input" placeholder="Ingresa código de sala" maxlength="6">
     <input class="linput" id="join-name-input" placeholder="Tu nombre (opcional)" maxlength="16" style="letter-spacing:1px;text-transform:none;">
-    <button class="lbtn secondary" onclick="joinRoom()">🚗 UNIRSE A SALA</button>
+    <button class="lbtn secondary" onclick="unlockAudio();joinRoom()">🚗 UNIRSE A SALA</button>
   </div>
 </div>
 
@@ -566,6 +566,7 @@ let _hostHeartbeat=null;
 
 // ─── HOST FLOW ────────────────────────────────────────
 function showHostRoom(){
+  unlockAudio();
   isHost=true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
@@ -1873,19 +1874,14 @@ function _raceLoop(){
   _raceTO=setTimeout(()=>{_raceNodes=[];if(_raceActive)_raceLoop();},b*tot*1000);
 }
 
-// ── Arrancar música en el primer gesto ──
-// pointerdown no interfiere con los botones ni el canvas
-(function(){
-  let started=false;
-  function _go(){
-    if(started) return; started=true;
-    document.removeEventListener('pointerdown',_go);
-    document.removeEventListener('keydown',_go);
-    startMenuMusic();
-  }
-  document.addEventListener('pointerdown',_go,{passive:true});
-  document.addEventListener('keydown',_go);
-})();
+// ── Audio unlock — llamado desde los botones del lobby ──
+// En móvil, SOLO un click/tap directo en un botón desbloquea el audio.
+let _audioStarted = false;
+function unlockAudio(){
+  if(_audioStarted) return;
+  _audioStarted = true;
+  startMenuMusic();
+}
 
 </script>
 </body>
