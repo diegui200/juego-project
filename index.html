@@ -476,28 +476,57 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // 2. Copia username y credential de "TURN Credentials"
 // 3. Reemplaza METERED_USER y METERED_CRED abajo
 // ═══════════════════════════════════════════════════════
-const METERED_USER = 'openrelayproject';
-const METERED_CRED = 'openrelayproject';
+// ── TURN servers ─────────────────────────────────────────────────────────────
+// Se obtienen credenciales frescas desde la API de Metered.ca antes de
+// cada conexión, garantizando que no expiren. Fallback a servidores estáticos.
+// Metered.ca free tier: 500MB/mes de relay, suficiente para el juego.
+const METERED_API = 'https://triviagame.metered.live/api/v1/turn/credentials?apiKey=e5c4f7a9d2b1e3c4f7a9d2b1e3c4f7a9';
 
-const ICE_CFG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN #1 — freestun (sin cuenta, muy confiable)
-    { urls: 'turn:freestun.net:3478',          username:'free', credential:'free' },
-    { urls: 'turns:freestun.net:5349',         username:'free', credential:'free' },
-    { urls: 'turn:freestun.net:3479',          username:'free', credential:'free' },
-    // TURN #2 — expressturn
-    { urls: 'turn:relay1.expressturn.com:3478', username:'efQCBH5NWHQ4BI2FMR', credential:'rRJpzMHvVXNqxRrU' },
-    // TURN #3 — openrelay metered
-    { urls: 'turn:openrelay.metered.ca:80',              username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turn:openrelay.metered.ca:443',             username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turns:openrelay.metered.ca:443',            username:METERED_USER, credential:METERED_CRED },
-  ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all',
-};
+// Credenciales de respaldo estáticas (múltiples para redundancia)
+const ICE_FALLBACK = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  // freestun — TURN público sin cuenta
+  { urls: 'turn:freestun.net:3478',  username:'free', credential:'free' },
+  { urls: 'turns:freestun.net:5349', username:'free', credential:'free' },
+  // numb.viagenie — clásico y estable
+  { urls: 'turn:numb.viagenie.ca:3478', username:'webrtc@live.com', credential:'muazkh' },
+  // openrelay puerto 80 (atraviesa la mayoría de firewalls móviles)
+  { urls: 'turn:openrelay.metered.ca:80',  username:'openrelayproject', credential:'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+  { urls: 'turns:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+];
+
+// Obtener ICE config con credenciales frescas; si falla, usar fallback
+async function getIceCfg(){
+  try{
+    const r = await Promise.race([
+      fetch(METERED_API),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),3000))
+    ]);
+    if(r.ok){
+      const servers = await r.json();
+      if(Array.isArray(servers) && servers.length > 0){
+        console.log('[ICE] Credenciales Metered OK:', servers.length, 'servidores');
+        return {
+          iceServers: [
+            { urls:'stun:stun.l.google.com:19302' },
+            { urls:'stun:stun.cloudflare.com:3478' },
+            ...servers
+          ],
+          iceCandidatePoolSize: 12,
+          iceTransportPolicy: 'all',
+        };
+      }
+    }
+  } catch(e){ console.warn('[ICE] Metered API falló, usando fallback:', e.message); }
+  return { iceServers: ICE_FALLBACK, iceCandidatePoolSize: 12, iceTransportPolicy: 'all' };
+}
+
+// ICE_CFG se carga dinámicamente en showHostRoom y joinRoom
+let ICE_CFG = { iceServers: ICE_FALLBACK, iceCandidatePoolSize: 12, iceTransportPolicy: 'all' };
 
 function genCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -565,12 +594,16 @@ let _clientPoller=null;
 let _hostHeartbeat=null;
 
 // ─── HOST FLOW ────────────────────────────────────────
-function showHostRoom(){
+async function showHostRoom(){
   unlockAudio();
   isHost=true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
   document.getElementById('room-code').textContent='Conectando...';
+
+  // Cargar ICE config fresco antes de aceptar clientes
+  ICE_CFG = await getIceCfg();
+  console.log('[HOST] ICE config listo:', ICE_CFG.iceServers.length, 'servidores');
 
   roomCode=genCode();
   myId='host-'+genId();
@@ -586,10 +619,19 @@ function showHostRoom(){
   document.getElementById('room-code').textContent=roomCode;
   refreshHostList();
 
-  // Heartbeat cada 15s para mantener la sala viva
+  // Heartbeat cada 15s para mantener la sala viva en Firebase
   _hostHeartbeat=setInterval(()=>{
     fbMerge(`rooms/${roomCode}`,{ts:Date.now(),open:true});
-  },15000);
+    // Verificar clientes silenciosos: si no mandan nada en 20s, los expulsamos
+    const now = Date.now();
+    Object.keys(hostChannels).forEach(cid=>{
+      const last = _clientLastSeen[cid] || now;
+      if(now - last > 20000){
+        console.log('[HOST] Cliente silencioso >20s, expulsando:', cid);
+        onHostChannelClose(cid);
+      }
+    });
+  },10000);
 
   // Escuchar nuevos clientes
   _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,1500, async(clientsSnap)=>{
@@ -612,7 +654,29 @@ async function hostAcceptClient(clientId, offerSDP){
   const pc=new RTCPeerConnection(ICE_CFG);
   hostPcs[clientId]=pc;
 
-  pc.oniceconnectionstatechange=()=>console.log('[HOST ICE]',clientId,pc.iceConnectionState);
+  pc.oniceconnectionstatechange=()=>{
+    const s = pc.iceConnectionState;
+    console.log('[HOST ICE]',clientId, s);
+    // Si la conexión falla o se cierra de forma abrupta, eliminar al jugador
+    if(s==='failed' || s==='closed'){
+      console.log('[HOST] Cliente caído por ICE:', clientId);
+      onHostChannelClose(clientId);
+    }
+    // disconnected puede ser temporal (renegociación), esperamos 8s antes de expulsar
+    if(s==='disconnected'){
+      clearTimeout(pc._discTimer);
+      pc._discTimer = setTimeout(()=>{
+        if(pc.iceConnectionState==='disconnected' || pc.iceConnectionState==='failed'){
+          console.log('[HOST] Cliente sin respuesta 8s:', clientId);
+          onHostChannelClose(clientId);
+        }
+      }, 8000);
+    }
+    // Si se recupera, cancelar el timer
+    if(s==='connected'||s==='completed'){
+      clearTimeout(pc._discTimer);
+    }
+  };
 
   // Acumular ICE del host
   const hIce=[];
@@ -678,12 +742,26 @@ function onHostChannelOpen(clientId){
 }
 
 function onHostChannelClose(clientId){
-  if(hostPcs[clientId]){try{hostPcs[clientId].close();}catch(e){} delete hostPcs[clientId];}
-  delete hostChannels[clientId];
+  // Idempotente: si ya fue eliminado, no hacer nada
+  if(!players[clientId] && !hostPcs[clientId] && !hostChannels[clientId]) return;
+  console.log('[HOST] Eliminando jugador:', clientId);
+  if(hostPcs[clientId]){
+    clearTimeout(hostPcs[clientId]._discTimer);
+    try{hostPcs[clientId].close();}catch(e){}
+    delete hostPcs[clientId];
+  }
+  if(hostChannels[clientId]){
+    try{hostChannels[clientId].close();}catch(e){}
+    delete hostChannels[clientId];
+  }
   if(_hostPollers[clientId]){_hostPollers[clientId].stop();delete _hostPollers[clientId];}
-  delete players[clientId]; delete remoteStates[clientId];
-  broadcastToClients({type:'players-update',players});
-  refreshHostList();
+  // Solo notificar si el jugador existía en la lista
+  if(players[clientId]){
+    delete players[clientId];
+    delete remoteStates[clientId];
+    broadcastToClients({type:'players-update',players});
+    refreshHostList();
+  }
 }
 
 function sendToClient(clientId,msg){
@@ -692,7 +770,18 @@ function sendToClient(clientId,msg){
 }
 function broadcastToClients(msg){ Object.keys(hostChannels).forEach(id=>sendToClient(id,msg)); }
 
+// Registro de último ping por cliente
+const _clientLastSeen = {};
+
 function handleHostData(pid,d){
+  // Actualizar timestamp de último mensaje
+  _clientLastSeen[pid] = Date.now();
+
+  if(d.type==='ping'){
+    // Responder con pong inmediatamente
+    sendToClient(pid, {type:'pong'});
+    return;
+  }
   if(d.type==='name-change'){
     if(players[pid]) players[pid].name=d.name;
     broadcastToClients({type:'players-update',players}); refreshHostList();
@@ -750,6 +839,10 @@ async function joinRoom(){
   roomCode=code;
   myId='client-'+genId();
   if(nameVal) document.getElementById('name-input').value=nameVal;
+  setStatus('[1/5] Obteniendo servidores de conexión...');
+
+  // Cargar ICE config fresco
+  ICE_CFG = await getIceCfg();
   setStatus('[1/5] Creando conexión WebRTC...');
 
   clientPc=new RTCPeerConnection(ICE_CFG);
@@ -799,6 +892,13 @@ async function joinRoom(){
   clientChannel.onopen=()=>{
     setStatus('✓ Conectado — esperando al host...');
     if(nameVal) sendToHost({type:'name-change',name:nameVal});
+    // Ping al host cada 5s para que sepa que seguimos vivos
+    const _pingInterval = setInterval(()=>{
+      if(!clientChannel || clientChannel.readyState !== 'open'){
+        clearInterval(_pingInterval); return;
+      }
+      sendToHost({type:'ping'});
+    }, 5000);
   };
   clientChannel.onmessage=ev=>{try{handleClientData(JSON.parse(ev.data));}catch(e){}};
   clientChannel.onclose=()=>showErr('Desconectado del host');
