@@ -470,41 +470,33 @@ const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 // Usamos múltiples TURN públicos y gratuitos para garantizar
 // conectividad entre redes distintas (datos móviles, NAT estricto, etc.)
 // Si uno falla, WebRTC prueba el siguiente automáticamente.
+// ═══════════════════════════════════════════════════════
+// TURN credentials — para registrar las tuyas (gratis):
+// 1. https://dashboard.metered.ca/signup
+// 2. Copia username y credential de "TURN Credentials"
+// 3. Reemplaza METERED_USER y METERED_CRED abajo
+// ═══════════════════════════════════════════════════════
+const METERED_USER = 'openrelayproject';
+const METERED_CRED = 'openrelayproject';
+
 const ICE_CFG = {
   iceServers: [
-    // STUN de Google — resolución de IP pública
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    // STUN adicionales para cuando Google bloquea
-    { urls: 'stun:stun.stunprotocol.org:3478' },
-    { urls: 'stun:stun.voip.blackberry.com:3478' },
-    { urls: 'stun:stun.sipgate.net:3478' },
-
-    // TURN público #1 — freestun.net (gratuito, sin cuenta, estable)
-    { urls: 'turn:freestun.net:3478',  username: 'free', credential: 'free' },
-    { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
-
-    // TURN público #2 — relay.metered.ca demo (diferente endpoint que openrelay)
-    { urls: 'turn:relay1.expressturn.com:3478', username: 'efQCBH5NWHQ4BI2FMR', credential: 'rRJpzMHvVXNqxRrU' },
-
-    // TURN público #3 — numb.viagenie.ca (uno de los más históricos y estables)
-    { urls: 'turn:numb.viagenie.ca:3478', username: 'webrtc@live.com', credential: 'muazkh' },
-    { urls: 'turn:numb.viagenie.ca:3478?transport=tcp', username: 'webrtc@live.com', credential: 'muazkh' },
-
-    // TURN público #4 — turn.bistri.com
-    { urls: 'turn:turn.bistri.com:80', username: 'homeo', credential: 'homeo' },
-
-    // TURN público #5 — computeengineondemand (Google)
-    { urls: 'turn:74.125.140.127:19305?transport=udp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
-    { urls: 'turns:74.125.140.127:443?transport=tcp', username: 'CIaKne4FEAAAAAF_YCjHTSlgZjscz5N7gYzB3w', credential: '/EKkXTw9oxXpVj3A7HUv6aeVdKg=' },
+    // TURN #1 — freestun (sin cuenta, muy confiable)
+    { urls: 'turn:freestun.net:3478',          username:'free', credential:'free' },
+    { urls: 'turns:freestun.net:5349',         username:'free', credential:'free' },
+    { urls: 'turn:freestun.net:3479',          username:'free', credential:'free' },
+    // TURN #2 — expressturn
+    { urls: 'turn:relay1.expressturn.com:3478', username:'efQCBH5NWHQ4BI2FMR', credential:'rRJpzMHvVXNqxRrU' },
+    // TURN #3 — openrelay metered
+    { urls: 'turn:openrelay.metered.ca:80',              username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443',             username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turns:openrelay.metered.ca:443',            username:METERED_USER, credential:METERED_CRED },
   ],
-  iceCandidatePoolSize: 15,
-  iceTransportPolicy: 'all',   // probar STUN primero, TURN si falla
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require',
+  iceCandidatePoolSize: 10,
+  iceTransportPolicy: 'all',
 };
 
 function genCode(){
@@ -772,7 +764,28 @@ async function joinRoom(){
       try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
     }
     if(s==='failed'){
-      setStatus('⚠️ Ruta directa fallida — intentando con servidor relay...');
+      setStatus('⏳ Conectando vía servidor relay... (puede tardar hasta 20s)');
+      // Reintentar ICE automáticamente usando solo servidores TURN
+      try{
+        if(clientPc.restartIce) clientPc.restartIce();
+      }catch(e){}
+      // Forzar recolección de nuevos candidatos TURN
+      setTimeout(async()=>{
+        if(clientPc&&clientPc.iceConnectionState==='failed'){
+          try{
+            const offer=await clientPc.createOffer({iceRestart:true});
+            await clientPc.setLocalDescription(offer);
+            // Reenviar offer a Firebase para que el host responda
+            await fbSet(`rooms/${roomCode}/clients/${myId}`,{
+              offer: clientPc.localDescription.sdp,
+              clientIce: [],
+              ts: Date.now(),
+              restart: true
+            });
+            setStatus('⏳ Reenviando conexión al host...');
+          }catch(e){ setStatus('❌ No se pudo conectar. Intenta de nuevo.'); }
+        }
+      }, 2000);
       try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
     }
   };
