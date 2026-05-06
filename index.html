@@ -592,7 +592,7 @@ function showHostRoom(){
   },15000);
 
   // Escuchar nuevos clientes
-  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,1500, async(clientsSnap)=>{
+  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,500, async(clientsSnap)=>{
     if(!clientsSnap||typeof clientsSnap!=='object') return;
     for(const [cid, cdata] of Object.entries(clientsSnap)){
       if(hostPcs[cid]) continue;           // ya en proceso
@@ -633,15 +633,15 @@ async function hostAcceptClient(clientId, offerSDP){
     const answer=await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    // 3. Esperar a que ICE gathering termine (máx 4s)
+    // 3. Esperar a que ICE gathering termine (máx 4s — si tarda más, ya hay suficientes candidatos)
     await new Promise(resolve=>{
       if(pc.iceGatheringState==='complete'){ resolve(); return; }
       const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
       pc.addEventListener('icegatheringstatechange',check);
-      setTimeout(resolve,12000);
+      setTimeout(resolve, 4000);
     });
 
-    // 4. Escribir answer + ICE del host en un solo PATCH
+    // 4. Escribir answer + ICE del host en Firebase
     console.log('[HOST] Escribiendo answer + '+hIce.length+' ICE en Firebase');
     await fbMerge(`rooms/${roomCode}/clients/${clientId}`,{
       answer: pc.localDescription.sdp,
@@ -649,16 +649,21 @@ async function hostAcceptClient(clientId, offerSDP){
     });
     console.log('[HOST] Answer escrita OK');
 
-    // 5. Leer ICE del cliente (puede que ya estén o lleguen después)
+    // 5. Leer ICE del cliente — sin re-aplicar los ya aplicados
+    let appliedCount = 0;
     async function applyClientIce(){
       const d=await fbGet(`rooms/${roomCode}/clients/${clientId}/clientIce`);
-      if(Array.isArray(d)) d.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
+      if(Array.isArray(d) && d.length > appliedCount){
+        const newOnes = d.slice(appliedCount);
+        appliedCount = d.length;
+        newOnes.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
+        console.log('[HOST] ICE cliente aplicados:', newOnes.length, '| Total:', appliedCount);
+      }
     }
     applyClientIce();
-    // Reintentar con más frecuencia para redes lentas o lejanas
-    setTimeout(applyClientIce, 2000);
-    setTimeout(applyClientIce, 5000);
-    setTimeout(applyClientIce, 10000);
+    setTimeout(applyClientIce, 1500);
+    setTimeout(applyClientIce, 4000);
+    setTimeout(applyClientIce, 9000);
     setTimeout(applyClientIce, 18000);
 
   } catch(err){
@@ -827,7 +832,7 @@ async function joinRoom(){
     if(clientPc.iceGatheringState==='complete'){resolve();return;}
     const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
     clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve,12000);
+    setTimeout(resolve, 4000);
   });
   setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
 
@@ -839,7 +844,6 @@ async function joinRoom(){
   });
 
   setStatus('[3/5] Esperando respuesta del host...');
-  // Timeout global: si en 20s no hay answer → error
   let connected=false;
   const _joinTimeout=setTimeout(()=>{
     if(connected) return;
@@ -848,10 +852,10 @@ async function joinRoom(){
     if(clientPc){try{clientPc.close();}catch(e){} clientPc=null;}
     document.getElementById('client-room').style.display='none';
     document.getElementById('lobby').style.display='flex';
-  },35000);
+  }, 50000);
 
-  // Esperar answer + hostIce del host
-  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`,1000, async data=>{
+  // Esperar answer del host
+  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`, 500, async data=>{
     if(connected) return;
     if(data.rejected){
       connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
@@ -860,17 +864,34 @@ async function joinRoom(){
       document.getElementById('lobby').style.display='flex';
       return;
     }
-    if(data.answer && clientPc.signalingState==='have-local-offer'){
+    if(data.answer && clientPc && clientPc.signalingState==='have-local-offer'){
       connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
-      setStatus(`[4/5] Host respondió — aplicando answer + ${(data.hostIce||[]).length} ICE...`);
+      setStatus(`[4/5] Host respondió — aplicando answer...`);
       try{
-        await clientPc.setRemoteDescription({type:'answer',sdp:data.answer});
-        if(Array.isArray(data.hostIce)){
+        await clientPc.setRemoteDescription({type:'answer', sdp:data.answer});
+        // Aplicar ICE del host que ya llegaron
+        let appliedHostIce = 0;
+        if(Array.isArray(data.hostIce) && data.hostIce.length>0){
           data.hostIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
+          appliedHostIce = data.hostIce.length;
         }
+        // Seguir polling para ICE tardíos del host (TURN puede tardar en redes móviles)
+        const lateIcePoller = setInterval(async()=>{
+          if(!clientPc || clientPc.iceConnectionState==='connected' || clientPc.iceConnectionState==='completed'){
+            clearInterval(lateIcePoller); return;
+          }
+          const fresh = await fbGet(`rooms/${code}/clients/${myId}/hostIce`);
+          if(Array.isArray(fresh) && fresh.length > appliedHostIce){
+            const newOnes = fresh.slice(appliedHostIce);
+            appliedHostIce = fresh.length;
+            newOnes.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
+            console.log('[CLIENT] ICE tardíos del host aplicados:', newOnes.length);
+          }
+        }, 1500);
+        setTimeout(()=>clearInterval(lateIcePoller), 30000);
       } catch(err){
         setStatus('❌ Error aplicando answer: '+err.message);
-        console.warn('setRemoteDescription error',err);
+        console.warn('setRemoteDescription error', err);
       }
     }
   });
