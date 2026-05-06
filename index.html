@@ -475,12 +475,13 @@ let _iceCfgCache = null;
 async function getIceCfg(){
   if(_iceCfgCache) return _iceCfgCache;
   try {
+    console.log('[TURN] Pidiendo credenciales a Metered...');
     const r = await fetch(
       `https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_KEY}`
     );
     if(r.ok){
       const servers = await r.json();
-      console.log('[TURN] Metered OK —', servers.length, 'servers');
+      console.log('[TURN] Metered OK —', servers.length, 'servers:', JSON.stringify(servers));
       _iceCfgCache = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -491,10 +492,12 @@ async function getIceCfg(){
         iceTransportPolicy: 'all',
       };
       return _iceCfgCache;
+    } else {
+      console.warn('[TURN] Metered HTTP', r.status);
     }
-  } catch(e){ console.warn('[TURN] Metered fetch falló, usando fallback:', e); }
+  } catch(e){ console.warn('[TURN] Metered fetch falló:', e.message); }
 
-  // Fallback si la API no responde
+  // Fallback
   console.warn('[TURN] Usando servidores públicos de respaldo');
   _iceCfgCache = {
     iceServers: [
@@ -512,6 +515,9 @@ async function getIceCfg(){
   };
   return _iceCfgCache;
 }
+
+// Precargar ICE config al cargar la página para que esté listo al conectar
+window.addEventListener('load', ()=>{ getIceCfg(); });
 
 
 function genCode(){
@@ -785,37 +791,15 @@ async function joinRoom(){
   // Mostrar cambios de estado ICE en pantalla
   clientPc.oniceconnectionstatechange=()=>{
     const s=clientPc.iceConnectionState;
-    if(s==='checking') setStatus('[4/5] Probando rutas de conexión (puede tardar 15-30s desde redes distintas)...');
+    console.log('[ICE]', s);
+    if(s==='checking') setStatus('Probando rutas de conexión...');
     if(s==='connected'||s==='completed') setStatus('✓ Conectado — abriendo canal de datos...');
     if(s==='disconnected'){
-      setStatus('⚠️ Conexión intermitente, reintentando...');
-      // ICE restart automático al desconectarse
+      setStatus('⚠️ Señal intermitente, reintentando...');
       try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
     }
     if(s==='failed'){
-      setStatus('⏳ Conectando vía servidor relay... (puede tardar hasta 20s)');
-      // Reintentar ICE automáticamente usando solo servidores TURN
-      try{
-        if(clientPc.restartIce) clientPc.restartIce();
-      }catch(e){}
-      // Forzar recolección de nuevos candidatos TURN
-      setTimeout(async()=>{
-        if(clientPc&&clientPc.iceConnectionState==='failed'){
-          try{
-            const offer=await clientPc.createOffer({iceRestart:true});
-            await clientPc.setLocalDescription(offer);
-            // Reenviar offer a Firebase para que el host responda
-            await fbSet(`rooms/${roomCode}/clients/${myId}`,{
-              offer: clientPc.localDescription.sdp,
-              clientIce: [],
-              ts: Date.now(),
-              restart: true
-            });
-            setStatus('⏳ Reenviando conexión al host...');
-          }catch(e){ setStatus('❌ No se pudo conectar. Intenta de nuevo.'); }
-        }
-      }, 2000);
-      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
+      setStatus('❌ No se pudo conectar. Cierra y vuelve a intentar.');
     }
   };
   clientPc.onconnectionstatechange=()=>{
