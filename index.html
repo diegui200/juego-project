@@ -793,18 +793,32 @@ function checkMultiFinish(pid, state){
 // SEND MY STATE
 // ═══════════════════════════════════════════════════════
 let stateThrottle = 0;
-// Número de jugadores actuales para throttle adaptativo
+let _lastSentState = null; // para detectar cambios reales
 function _playerCount(){ return Object.keys(players).length; }
 
 function sendMyState(){
   if(isHost) return;
   const now = Date.now();
-  const pc = _playerCount();
-  const interval = pc <= 4 ? 67 : pc <= 8 ? 100 : pc <= 15 ? 150 : 200;
-  if(now - stateThrottle < interval) return;
+  if(now - stateThrottle < 100) return; // fijo 10fps siempre
+
+  // Opción 3: solo enviar si hubo cambio real
+  const rx = Math.round(car.x*10)/10;
+  const ry = Math.round(car.y*10)/10;
+  const ra = Math.round(car.angle*100)/100;
+  const moving = Math.abs(car.speed) > 0.05;
+  if(_lastSentState && !moving){
+    // Si no se está moviendo, enviar solo cada 500ms (keep-alive)
+    if(now - stateThrottle < 500) return;
+  }
+  if(_lastSentState &&
+     _lastSentState.x === rx &&
+     _lastSentState.y === ry &&
+     _lastSentState.a === ra &&
+     _lastSentState.l === car.laps) return; // sin cambio, no enviar
+
   stateThrottle = now;
-  sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
-    a:Math.round(car.angle*100)/100, l:car.laps, f:myFinished?1:0 });
+  _lastSentState = { x:rx, y:ry, a:ra, l:car.laps };
+  sendToHost({ t:'s', x:rx, y:ry, a:ra, l:car.laps, f:myFinished?1:0 });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1213,7 +1227,7 @@ function initCar(){
   car.angle=Math.atan2(dir[1],dir[0]);
   car.speed=0; car.fuel=100; car.laps=0; car.score=0;
   car.stunEnd=0; car.spinVel=0;
-  lapCrossed=false; carMidPassed=false; triviaActive=false; pitsActive=false; qUsed=[];
+  lapCrossed=false; carMidPassed=false; triviaActive=false; pitsActive=false; qUsed=[]; _lastSentState=null;
   wrongAnswerCooldownEnd=0; myFinished=false;
   _lastFrameTime=0;
 }
