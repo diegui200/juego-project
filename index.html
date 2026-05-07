@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v32 — Multijugador</title>
+<title>Trivia Racer v35 — Multijugador</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -77,9 +77,15 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 .ts-btn.active { border-color: #e94560; color: #fff; }
 #players-list {
   background: #0f0f1a; border: 1px solid #333; border-radius: 8px;
-  width: 100%; max-width: 360px; min-height: 80px; padding: 10px;
+  width: 100%; max-width: 360px;
+  min-height: 80px; max-height: 220px;
+  padding: 10px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 6px;
+  scrollbar-width: thin; scrollbar-color: #444 #0f0f1a;
 }
+#players-list::-webkit-scrollbar { width: 5px; }
+#players-list::-webkit-scrollbar-track { background: #0f0f1a; border-radius: 8px; }
+#players-list::-webkit-scrollbar-thumb { background: #444; border-radius: 8px; }
 #players-list-title { color: #666; font-size: 10px; letter-spacing: 2px; margin-bottom: 4px; }
 .player-row {
   display: flex; align-items: center; gap: 8px;
@@ -105,9 +111,15 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 #client-status { color: #666; font-size: 11px; min-height: 16px; }
 #client-players-list {
   background: #0f0f1a; border: 1px solid #333; border-radius: 8px;
-  width: 100%; max-width: 320px; min-height: 60px; padding: 10px;
+  width: 100%; max-width: 320px;
+  min-height: 60px; max-height: 200px;
+  padding: 10px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 6px;
+  scrollbar-width: thin; scrollbar-color: #444 #0f0f1a;
 }
+#client-players-list::-webkit-scrollbar { width: 5px; }
+#client-players-list::-webkit-scrollbar-track { background: #0f0f1a; border-radius: 8px; }
+#client-players-list::-webkit-scrollbar-thumb { background: #444; border-radius: 8px; }
 
 /* ── PODIUM ── */
 #podium-screen {
@@ -451,500 +463,221 @@ function refreshClientList(){
 }
 
 // ═══════════════════════════════════════════════════════
-// SEÑALIZACIÓN — Firebase Realtime Database (WebRTC nativo)
-//
-// Firebase solo intercambia offers/answers/ICE candidates.
-// Una vez conectados, los datos van peer-to-peer directamente.
-// NO depende de ningún servidor externo que pueda expirar.
-//
-// Tu Firebase URL (ya configurada):
+// RED — WebSocket relay server
+// Cambia WS_URL por la URL de tu servidor en Railway/Render/Glitch
+// Ejemplo: 'wss://trivia-racer.up.railway.app'
 // ═══════════════════════════════════════════════════════
+const WS_URL = 'wss://servidor-juego-production.up.railway.app';
 
-const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
+let ws = null;           // WebSocket activo
+let _hostHeartbeat = null;
+let _hostRoomPoller = null;
 
-// ICE servers — STUN gratuito de Google (solo para atravesar NAT,
-// no necesita estar "vivo" constantemente como PeerJS)
-// STUN + TURN servers
-// TURN garantiza conexión entre cualquier red (WiFi, datos móviles, NAT estricto)
-// ─── TURN servers ─────────────────────────────────────
-// Usamos múltiples TURN públicos y gratuitos para garantizar
-// conectividad entre redes distintas (datos móviles, NAT estricto, etc.)
-// Si uno falla, WebRTC prueba el siguiente automáticamente.
-// ═══════════════════════════════════════════════════════
-// TURN credentials — para registrar las tuyas (gratis):
-// 1. https://dashboard.metered.ca/signup
-// 2. Copia username y credential de "TURN Credentials"
-// 3. Reemplaza METERED_USER y METERED_CRED abajo
-// ═══════════════════════════════════════════════════════
-const METERED_USER = 'openrelayproject';
-const METERED_CRED = 'openrelayproject';
-
-const ICE_CFG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN #1 — freestun (sin cuenta, muy confiable)
-    { urls: 'turn:freestun.net:3478',          username:'free', credential:'free' },
-    { urls: 'turns:freestun.net:5349',         username:'free', credential:'free' },
-    { urls: 'turn:freestun.net:3479',          username:'free', credential:'free' },
-    // TURN #2 — expressturn
-    { urls: 'turn:relay1.expressturn.com:3478', username:'efQCBH5NWHQ4BI2FMR', credential:'rRJpzMHvVXNqxRrU' },
-    // TURN #3 — openrelay metered
-    { urls: 'turn:openrelay.metered.ca:80',              username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turn:openrelay.metered.ca:443',             username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:METERED_USER, credential:METERED_CRED },
-    { urls: 'turns:openrelay.metered.ca:443',            username:METERED_USER, credential:METERED_CRED },
-  ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all',
-};
-
-function genCode(){
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let c=''; for(let i=0;i<6;i++) c+=chars[Math.floor(Math.random()*chars.length)];
-  return c;
-}
-function genId(){
-  return Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+function wsConnect(onOpen){
+  if(ws && ws.readyState === WebSocket.OPEN){ onOpen(); return; }
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = onOpen;
+  ws.onerror = e => showErr('Error de conexión con el servidor. Verifica que el servidor esté activo.');
+  ws.onclose = () => {
+    // Reconectar si hay una partida activa
+    if(gameRunning) setTimeout(()=>wsConnect(()=>{}), 2000);
+  };
+  ws.onmessage = ev => {
+    let d; try{ d = JSON.parse(ev.data); }catch{ return; }
+    if(isHost) handleHostMessage(d);
+    else       handleClientMessage(d);
+  };
 }
 
-// ─── Firebase helpers ─────────────────────────────────
-async function fbSet(path, data){
-  try {
-    const r = await fetch(`${FIREBASE_URL}/${path}.json`, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(data)
-    });
-    if(r.status===401||r.status===403)
-      showErr('⚠️ Firebase bloqueado — ve a Firebase Console → Realtime Database → Reglas → pon true en .read y .write → Publicar');
-  } catch(e){ console.warn('fbSet',path,e); }
-}
-async function fbMerge(path, data){
-  try {
-    await fetch(`${FIREBASE_URL}/${path}.json`, {
-      method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(data)
-    });
-  } catch(e){}
-}
-async function fbGet(path){
-  try {
-    const r = await fetch(`${FIREBASE_URL}/${path}.json`);
-    if(r.status===401||r.status===403){
-      showErr('⚠️ Firebase bloqueado — actualiza las reglas de seguridad');
-      return null;
-    }
-    if(!r.ok) return null;
-    return r.json();
-  } catch(e){ return null; }
-}
-async function fbDel(path){
-  try{ await fetch(`${FIREBASE_URL}/${path}.json`,{method:'DELETE'}); }catch(e){}
+function wsSend(obj){
+  if(ws && ws.readyState === WebSocket.OPEN)
+    try{ ws.send(JSON.stringify(obj)); }catch{}
 }
 
-// Poller genérico que llama cb cada vez que el valor cambia
-function fbWatch(path, intervalMs, cb){
-  let active=true, lastStr='__INIT__';
-  async function tick(){
-    if(!active) return;
-    const d = await fbGet(path);
-    const s = JSON.stringify(d);
-    if(s !== lastStr){ lastStr=s; if(d!==null) cb(d); }
-    if(active) setTimeout(tick, intervalMs);
-  }
-  tick();
-  return { stop(){ active=false; } };
+// ─── Funciones relay ──────────────────────────────────
+function sendToClient(clientId, data){
+  wsSend({ type:'host-to-client', to: clientId, data });
 }
-
-// ─── Estado de conexiones ─────────────────────────────
-let hostPcs={}, hostChannels={};
-let clientPc=null, clientChannel=null;
-let _hostPollers={};
-let _hostRoomPoller=null;
-let _clientPoller=null;
-let _hostHeartbeat=null;
+function broadcastToClients(data){
+  wsSend({ type:'host-to-client', to:'all', data });
+}
+function sendToHost(data){
+  wsSend({ type:'client-to-host', data });
+}
 
 // ─── HOST FLOW ────────────────────────────────────────
 function showHostRoom(){
-  unlockAudio();
-  isHost=true;
+  isHost = true;
   document.getElementById('lobby').style.display='none';
   document.getElementById('host-room').style.display='flex';
   document.getElementById('room-code').textContent='Conectando...';
 
-  roomCode=genCode();
-  myId='host-'+genId();
-  myName='HOST'; myColorIdx=0; myColor=CAR_COLORS[0];
+  roomCode = genCode();
+  myId = 'host-' + genId();
 
-  // Crear sala en Firebase
-  fbSet(`rooms/${roomCode}`, { hostId:myId, ts:Date.now(), open:true });
-  // Borrar sala al cerrar pestaña
-  window.addEventListener('beforeunload',()=>{
-    navigator.sendBeacon(`${FIREBASE_URL}/rooms/${roomCode}.json`, JSON.stringify({open:false,ts:0}));
+  wsConnect(() => {
+    wsSend({ type:'host-create', code: roomCode });
   });
 
-  document.getElementById('room-code').textContent=roomCode;
-  refreshHostList();
-
-  // Heartbeat cada 15s para mantener la sala viva
-  _hostHeartbeat=setInterval(()=>{
-    fbMerge(`rooms/${roomCode}`,{ts:Date.now(),open:true});
-  },15000);
-
-  // Escuchar nuevos clientes
-  _hostRoomPoller=fbWatch(`rooms/${roomCode}/clients`,500, async(clientsSnap)=>{
-    if(!clientsSnap||typeof clientsSnap!=='object') return;
-    for(const [cid, cdata] of Object.entries(clientsSnap)){
-      if(hostPcs[cid]) continue;           // ya en proceso
-      if(!cdata||!cdata.offer) continue;   // aún no escribió offer
-      hostAcceptClient(cid, cdata.offer);
+  ws.onmessage = ev => {
+    let d; try{ d = JSON.parse(ev.data); }catch{ return; }
+    if(d.type === 'host-ready'){
+      document.getElementById('room-code').textContent = roomCode;
+      refreshHostList();
+      // Heartbeat cada 20s para mantener sala viva
+      _hostHeartbeat = setInterval(()=>{
+        wsSend({ type:'host-ping', code: roomCode });
+      }, 20000);
     }
-  });
-}
-
-async function hostAcceptClient(clientId, offerSDP){
-  console.log('[HOST] Aceptando cliente:', clientId);
-  maxPlayers=parseInt(document.getElementById('max-players-sel').value);
-  if(Object.keys(hostPcs).length>=maxPlayers){
-    fbMerge(`rooms/${roomCode}/clients/${clientId}`,{rejected:true}); return;
-  }
-
-  const pc=new RTCPeerConnection(ICE_CFG);
-  hostPcs[clientId]=pc;
-
-  pc.oniceconnectionstatechange=()=>console.log('[HOST ICE]',clientId,pc.iceConnectionState);
-
-  // Acumular ICE del host
-  const hIce=[];
-  pc.onicecandidate=e=>{ if(e.candidate) hIce.push(e.candidate.toJSON()); };
-
-  // Canal de datos entrante del cliente
-  pc.ondatachannel=e=>{
-    const ch=e.channel;
-    ch.onopen=()=>{ hostChannels[clientId]=ch; onHostChannelOpen(clientId); };
-    ch.onmessage=ev=>{ try{handleHostData(clientId,JSON.parse(ev.data));}catch(err){} };
-    ch.onclose=()=>onHostChannelClose(clientId);
+    else if(d.type === 'client-connected'){
+      handleNewClient(d.clientId);
+    }
+    else if(d.type === 'client-disconnected'){
+      onClientLeft(d.clientId);
+    }
+    else {
+      // Mensajes de clientes (ya vienen con _from del servidor)
+      handleHostData(d._from, d);
+    }
   };
-
-  try{
-    // 1. Aplicar offer del cliente
-    await pc.setRemoteDescription({type:'offer',sdp:offerSDP});
-    // 2. Crear answer
-    const answer=await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    // 3. Esperar a que ICE gathering termine (máx 4s — si tarda más, ya hay suficientes candidatos)
-    await new Promise(resolve=>{
-      if(pc.iceGatheringState==='complete'){ resolve(); return; }
-      const check=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',check); resolve(); } };
-      pc.addEventListener('icegatheringstatechange',check);
-      setTimeout(resolve, 4000);
-    });
-
-    // 4. Escribir answer + ICE del host en Firebase
-    console.log('[HOST] Escribiendo answer + '+hIce.length+' ICE en Firebase');
-    await fbMerge(`rooms/${roomCode}/clients/${clientId}`,{
-      answer: pc.localDescription.sdp,
-      hostIce: hIce
-    });
-    console.log('[HOST] Answer escrita OK');
-
-    // 5. Leer ICE del cliente — sin re-aplicar los ya aplicados
-    let appliedCount = 0;
-    async function applyClientIce(){
-      const d=await fbGet(`rooms/${roomCode}/clients/${clientId}/clientIce`);
-      if(Array.isArray(d) && d.length > appliedCount){
-        const newOnes = d.slice(appliedCount);
-        appliedCount = d.length;
-        newOnes.forEach(c=>{ try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(e){} });
-        console.log('[HOST] ICE cliente aplicados:', newOnes.length, '| Total:', appliedCount);
-      }
-    }
-    applyClientIce();
-    setTimeout(applyClientIce, 1500);
-    setTimeout(applyClientIce, 4000);
-    setTimeout(applyClientIce, 9000);
-    setTimeout(applyClientIce, 18000);
-
-  } catch(err){
-    console.warn('hostAcceptClient error',err);
-    delete hostPcs[clientId];
-  }
 }
 
-function onHostChannelOpen(clientId){
-  const usedIdx=Object.values(players).map(p=>p.colorIdx);
-  let ci=1; while(usedIdx.includes(ci)) ci++;
-  players[clientId]={id:clientId,name:randomName(),color:CAR_COLORS[ci%CAR_COLORS.length],colorIdx:ci};
-  sendToClient(clientId,{type:'welcome',playerId:clientId,name:players[clientId].name,
-    color:players[clientId].color,colorIdx:ci,players});
-  broadcastToClients({type:'players-update',players});
+function handleNewClient(clientId){
+  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+  if(Object.keys(players).length >= maxPlayers){
+    sendToClient(clientId, { type:'rejected', reason:'Sala llena' });
+    return;
+  }
+  const usedIdx = Object.values(players).map(p=>p.colorIdx);
+  let ci = 0; while(usedIdx.includes(ci)) ci++;
+  players[clientId] = { id:clientId, name:randomName(), color:CAR_COLORS[ci % CAR_COLORS.length], colorIdx:ci };
+  sendToClient(clientId, { type:'welcome', playerId:clientId,
+    name:players[clientId].name, color:players[clientId].color, colorIdx:ci, players });
+  broadcastToClients({ type:'players-update', players });
   refreshHostList();
 }
 
-function onHostChannelClose(clientId){
-  if(hostPcs[clientId]){try{hostPcs[clientId].close();}catch(e){} delete hostPcs[clientId];}
-  delete hostChannels[clientId];
-  if(_hostPollers[clientId]){_hostPollers[clientId].stop();delete _hostPollers[clientId];}
-  delete players[clientId]; delete remoteStates[clientId];
-  broadcastToClients({type:'players-update',players});
+function onClientLeft(clientId){
+  delete players[clientId];
+  delete remoteStates[clientId];
+  broadcastToClients({ type:'players-update', players });
   refreshHostList();
 }
 
-function sendToClient(clientId,msg){
-  const ch=hostChannels[clientId];
-  if(ch&&ch.readyState==='open') try{ch.send(JSON.stringify(msg));}catch(e){}
-}
-function broadcastToClients(msg){ Object.keys(hostChannels).forEach(id=>sendToClient(id,msg)); }
-
-function handleHostData(pid,d){
-  if(d.type==='name-change'){
-    if(players[pid]) players[pid].name=d.name;
-    broadcastToClients({type:'players-update',players}); refreshHostList();
+function handleHostData(pid, d){
+  if(!pid) return;
+  if(d.type === 'name-change'){
+    if(players[pid]) players[pid].name = d.name;
+    broadcastToClients({ type:'players-update', players });
+    refreshHostList();
   }
-  if(d.type==='state-update'||d.t==='s'){
-    // Soportar tanto formato legacy como comprimido
-    const state = d.t==='s'
+  if(d.type === 'state-update' || d.t === 's'){
+    const state = d.t === 's'
       ? { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f }
       : d.state;
-    remoteStates[pid]=state;
-    if(state.laps>=3&&!state.finished) state.finished=true;
-    checkMultiFinish(pid,state);
-    // Relay también comprimido para ahorrar ancho de banda en el host
+    remoteStates[pid] = state;
+    checkMultiFinish(pid, state);
+    // Relay a los demás clientes
     const relay = { t:'r', id:pid, x:state.x, y:state.y, a:state.angle, l:state.laps, f:state.finished?1:0 };
-    Object.keys(hostChannels).forEach(otherId=>{
-      if(otherId===pid) return;
-      sendToClient(otherId, relay);
+    Object.keys(players).forEach(otherId => {
+      if(otherId !== pid) sendToClient(otherId, relay);
     });
   }
 }
 
-function hostSelectTrack(n,el){
-  selectedTrack=n;
+function hostStartGame(){
+  maxPlayers = parseInt(document.getElementById('max-players-sel').value);
+  broadcastToClients({ type:'start', track:selectedTrack, players });
+  launchGame(selectedTrack, players);
+}
+
+function hostSelectTrack(n, el){
+  selectedTrack = n;
   document.querySelectorAll('.ts-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
 }
-function hostStartGame(){
-  maxPlayers=parseInt(document.getElementById('max-players-sel').value);
-  broadcastToClients({type:'start',track:selectedTrack,players});
-  launchGame(selectedTrack,players);
-}
+
 function hostBackToLobby(){
-  if(_hostHeartbeat){clearInterval(_hostHeartbeat);_hostHeartbeat=null;}
-  if(_hostRoomPoller){_hostRoomPoller.stop();_hostRoomPoller=null;}
-  Object.values(_hostPollers).forEach(p=>p.stop()); _hostPollers={};
-  Object.values(hostPcs).forEach(pc=>{try{pc.close();}catch(e){}}); hostPcs={};
-  hostChannels={}; players={}; remoteStates={}; isHost=false;
-  fbMerge(`rooms/${roomCode}`,{open:false});
+  if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
+  wsSend({ type:'host-close' });
+  if(ws){ ws.close(); ws = null; }
+  players = {}; remoteStates = {}; isHost = false;
   document.getElementById('host-room').style.display='none';
   document.getElementById('lobby').style.display='flex';
 }
 
-// ─── CLIENT FLOW ──────────────────────────────────────
+// ─── CLIENT FLOW ─────────────────────────────────────
 async function joinRoom(){
-  const code=document.getElementById('join-code-input').value.trim().toUpperCase();
-  const nameVal=document.getElementById('join-name-input').value.trim();
-  if(code.length<4){showErr('Ingresa un código válido');return;}
+  const code    = document.getElementById('join-code-input').value.trim().toUpperCase();
+  const nameVal = document.getElementById('join-name-input').value.trim();
+  if(code.length < 4){ showErr('Ingresa un código válido'); return; }
 
   document.getElementById('lobby').style.display='none';
   document.getElementById('client-room').style.display='flex';
-  document.getElementById('client-status').textContent='Buscando sala...';
+  setStatus('Conectando al servidor...');
 
-  const roomData=await fbGet(`rooms/${code}`);
-  if(!roomData||!roomData.open||Date.now()-roomData.ts>90000){
-    showErr('Sala no encontrada o cerrada. Pide al host que cree una nueva.');
-    document.getElementById('client-room').style.display='none';
-    document.getElementById('lobby').style.display='flex';
-    return;
-  }
+  roomCode = code;
+  myId = 'client-' + genId();
 
-  roomCode=code;
-  myId='client-'+genId();
-  if(nameVal) document.getElementById('name-input').value=nameVal;
-  setStatus('[1/5] Creando conexión WebRTC...');
-
-  clientPc=new RTCPeerConnection(ICE_CFG);
-
-  // Mostrar cambios de estado ICE en pantalla
-  clientPc.oniceconnectionstatechange=()=>{
-    const s=clientPc.iceConnectionState;
-    if(s==='checking') setStatus('[4/5] Probando rutas de conexión (puede tardar 15-30s desde redes distintas)...');
-    if(s==='connected'||s==='completed') setStatus('✓ Conectado — abriendo canal de datos...');
-    if(s==='disconnected'){
-      setStatus('⚠️ Conexión intermitente, reintentando...');
-      // ICE restart automático al desconectarse
-      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
-    }
-    if(s==='failed'){
-      setStatus('⏳ Conectando vía servidor relay... (puede tardar hasta 20s)');
-      // Reintentar ICE automáticamente usando solo servidores TURN
-      try{
-        if(clientPc.restartIce) clientPc.restartIce();
-      }catch(e){}
-      // Forzar recolección de nuevos candidatos TURN
-      setTimeout(async()=>{
-        if(clientPc&&clientPc.iceConnectionState==='failed'){
-          try{
-            const offer=await clientPc.createOffer({iceRestart:true});
-            await clientPc.setLocalDescription(offer);
-            // Reenviar offer a Firebase para que el host responda
-            await fbSet(`rooms/${roomCode}/clients/${myId}`,{
-              offer: clientPc.localDescription.sdp,
-              clientIce: [],
-              ts: Date.now(),
-              restart: true
-            });
-            setStatus('⏳ Reenviando conexión al host...');
-          }catch(e){ setStatus('❌ No se pudo conectar. Intenta de nuevo.'); }
-        }
-      }, 2000);
-      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
-    }
-  };
-  clientPc.onconnectionstatechange=()=>{
-    console.log('connState:', clientPc.connectionState);
-  };
-
-  // Canal de datos — el cliente lo crea
-  clientChannel=clientPc.createDataChannel('game',{ordered:true});
-  clientChannel.onopen=()=>{
-    setStatus('✓ Conectado — esperando al host...');
-    if(nameVal) sendToHost({type:'name-change',name:nameVal});
-  };
-  clientChannel.onmessage=ev=>{try{handleClientData(JSON.parse(ev.data));}catch(e){}};
-  clientChannel.onclose=()=>showErr('Desconectado del host');
-
-  // Acumular ICE del cliente
-  const cIce=[];
-  clientPc.onicecandidate=e=>{
-    if(e.candidate){ cIce.push(e.candidate.toJSON()); }
-    else { console.log('ICE gathering done, candidates:', cIce.length); }
-  };
-
-  // Crear offer
-  setStatus('[2/5] Generando offer...');
-  const offer=await clientPc.createOffer();
-  await clientPc.setLocalDescription(offer);
-
-  // Esperar ICE gathering (máx 5s)
-  setStatus('[2/5] Recopilando candidatos de red...');
-  await new Promise(resolve=>{
-    if(clientPc.iceGatheringState==='complete'){resolve();return;}
-    const check=()=>{if(clientPc.iceGatheringState==='complete'){clientPc.removeEventListener('icegatheringstatechange',check);resolve();}};
-    clientPc.addEventListener('icegatheringstatechange',check);
-    setTimeout(resolve, 4000);
-  });
-  setStatus(`[3/5] Enviando a Firebase (${cIce.length} candidatos ICE)...`);
-
-  // Escribir offer + ICE del cliente en Firebase de una vez
-  await fbSet(`rooms/${code}/clients/${myId}`,{
-    offer: clientPc.localDescription.sdp,
-    clientIce: cIce,
-    ts: Date.now()
-  });
-
-  setStatus('[3/5] Esperando respuesta del host...');
-  let connected=false;
-  const _joinTimeout=setTimeout(()=>{
-    if(connected) return;
-    if(_clientPoller) _clientPoller.stop();
-    showErr('El host no respondió a tiempo. Intenta de nuevo.');
-    if(clientPc){try{clientPc.close();}catch(e){} clientPc=null;}
-    document.getElementById('client-room').style.display='none';
-    document.getElementById('lobby').style.display='flex';
-  }, 50000);
-
-  // Esperar answer del host
-  _clientPoller=fbWatch(`rooms/${code}/clients/${myId}`, 500, async data=>{
-    if(connected) return;
-    if(data.rejected){
-      connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
-      showErr('No se pudo unir: sala llena');
-      document.getElementById('client-room').style.display='none';
-      document.getElementById('lobby').style.display='flex';
-      return;
-    }
-    if(data.answer && clientPc && clientPc.signalingState==='have-local-offer'){
-      connected=true; clearTimeout(_joinTimeout); _clientPoller.stop();
-      setStatus(`[4/5] Host respondió — aplicando answer...`);
-      try{
-        await clientPc.setRemoteDescription({type:'answer', sdp:data.answer});
-        // Aplicar ICE del host que ya llegaron
-        let appliedHostIce = 0;
-        if(Array.isArray(data.hostIce) && data.hostIce.length>0){
-          data.hostIce.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
-          appliedHostIce = data.hostIce.length;
-        }
-        // Seguir polling para ICE tardíos del host (TURN puede tardar en redes móviles)
-        const lateIcePoller = setInterval(async()=>{
-          if(!clientPc || clientPc.iceConnectionState==='connected' || clientPc.iceConnectionState==='completed'){
-            clearInterval(lateIcePoller); return;
-          }
-          const fresh = await fbGet(`rooms/${code}/clients/${myId}/hostIce`);
-          if(Array.isArray(fresh) && fresh.length > appliedHostIce){
-            const newOnes = fresh.slice(appliedHostIce);
-            appliedHostIce = fresh.length;
-            newOnes.forEach(c=>{try{clientPc.addIceCandidate(new RTCIceCandidate(c));}catch(e){}});
-            console.log('[CLIENT] ICE tardíos del host aplicados:', newOnes.length);
-          }
-        }, 1500);
-        setTimeout(()=>clearInterval(lateIcePoller), 30000);
-      } catch(err){
-        setStatus('❌ Error aplicando answer: '+err.message);
-        console.warn('setRemoteDescription error', err);
-      }
-    }
+  wsConnect(() => {
+    wsSend({ type:'client-join', code, clientId: myId });
+    setStatus('Esperando al host...');
+    if(nameVal) document.getElementById('name-input').value = nameVal;
   });
 }
 
 function setStatus(msg){
-  const el=document.getElementById('client-status');
-  if(el) el.textContent=msg;
-  console.log('[STATUS]',msg);
+  const el = document.getElementById('client-status');
+  if(el) el.textContent = msg;
 }
 
-function sendToHost(msg){
-  if(clientChannel&&clientChannel.readyState==='open')
-    try{clientChannel.send(JSON.stringify(msg));}catch(e){}
-}
-function confirmName(){
-  const n=document.getElementById('name-input').value.trim();
-  if(!n) return;
-  myName=n;
-  sendToHost({type:'name-change',name:myName});
-  document.getElementById('client-status').textContent='✓ Nombre guardado: '+myName;
-}
-function handleClientData(d){
-  if(d.type==='rejected'){showErr('No se pudo unir: '+d.reason);return;}
-  if(d.type==='welcome'){
-    myId=d.playerId;
-    const typed=document.getElementById('name-input').value.trim();
-    myName=typed||d.name; myColor=d.color; myColorIdx=d.colorIdx;
-    players=d.players;
-    document.getElementById('name-input').value=myName;
-    if(typed) sendToHost({type:'name-change',name:myName});
+function handleClientMessage(d){
+  if(d.type === 'error'){
+    showErr(d.reason || 'Error de conexión');
+    document.getElementById('client-room').style.display='none';
+    document.getElementById('lobby').style.display='flex';
+    return;
+  }
+  if(d.type === 'rejected'){ showErr('No se pudo unir: ' + d.reason); return; }
+  if(d.type === 'welcome'){
+    myId = d.playerId;
+    const typed = document.getElementById('name-input').value.trim();
+    myName = typed || d.name;
+    myColor = d.color; myColorIdx = d.colorIdx;
+    players = d.players;
+    document.getElementById('name-input').value = myName;
+    if(typed) sendToHost({ type:'name-change', name:myName });
+    setStatus('✓ Conectado — esperando que el host inicie...');
     refreshClientList();
   }
-  if(d.type==='players-update'){
-    players=d.players;
-    if(players[myId]){myName=players[myId].name;myColor=players[myId].color;}
+  if(d.type === 'players-update'){
+    players = d.players;
+    if(players[myId]){ myName = players[myId].name; myColor = players[myId].color; }
     refreshClientList();
   }
-  if(d.type==='start'){ selectedTrack=d.track; players=d.players; launchGame(selectedTrack,players); }
-  if(d.type==='relay-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
-  if(d.type==='host-state'){ remoteStates[d.fromId]=d.state; checkMultiFinish(d.fromId,d.state); }
-  // Formato relay comprimido del host
-  if(d.t==='r'){
+  if(d.type === 'start'){
+    selectedTrack = d.track; players = d.players;
+    launchGame(selectedTrack, players);
+  }
+  if(d.t === 'r'){
     const state = { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f };
-    remoteStates[d.id]=state; checkMultiFinish(d.id,state);
+    remoteStates[d.id] = state; checkMultiFinish(d.id, state);
   }
-  if(d.type==='podium'){ finishers=d.finishers; if(!podiumShown) showPodium(); }
-  if(d.type==='back-to-lobby') resetToLobby();
+  if(d.type === 'relay-state' || d.type === 'host-state'){
+    remoteStates[d.fromId] = d.state; checkMultiFinish(d.fromId, d.state);
+  }
+  if(d.type === 'podium'){ finishers = d.finishers; if(!podiumShown) showPodium(); }
+  if(d.type === 'back-to-lobby') resetToLobby();
 }
 
+function confirmName(){
+  const n = document.getElementById('name-input').value.trim();
+  if(!n) return;
+  myName = n;
+  sendToHost({ type:'name-change', name:myName });
+  document.getElementById('client-status').textContent = '✓ Nombre guardado: ' + myName;
+}
 
-// ─── sendMyState: usar canal correcto según rol ────────
-// usa sendToHost() o broadcastToClients() según el rol
 
 // ═══════════════════════════════════════════════════════
 // LAUNCH GAME
@@ -1064,14 +797,10 @@ function _playerCount(){ return Object.keys(players).length; }
 function sendMyState(){
   if(isHost) return;
   const now = Date.now();
-  // Throttle adaptativo: más jugadores → menos frecuencia de envío
-  // ≤5 jugadores: 15fps (67ms) | ≤10: 10fps (100ms) | ≤20: 8fps (125ms) | >20: 6fps (167ms)
   const pc = _playerCount();
-  const interval = pc <= 5 ? 67 : pc <= 10 ? 100 : pc <= 20 ? 125 : 167;
+  const interval = pc <= 4 ? 67 : pc <= 8 ? 100 : pc <= 15 ? 150 : 200;
   if(now - stateThrottle < interval) return;
   stateThrottle = now;
-  // Payload comprimido: coordenadas redondeadas a 1 decimal, ángulo a 2 decimales
-  // De ~120 bytes a ~45 bytes por mensaje
   sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
     a:Math.round(car.angle*100)/100, l:car.laps, f:myFinished?1:0 });
 }
@@ -1127,15 +856,9 @@ function backToLobby(){
 }
 
 function resetToLobby(){
-  stopRaceMusic(); setTimeout(startMenuMusic,400);
+  stopRaceMusic(); setTimeout(startMenuMusic, 400);
   if(_hostHeartbeat){ clearInterval(_hostHeartbeat); _hostHeartbeat = null; }
-  if(_hostRoomPoller){ _hostRoomPoller.stop(); _hostRoomPoller = null; }
-  if(_clientPoller){ _clientPoller.stop(); _clientPoller = null; }
-  Object.values(_hostPollers).forEach(p=>p.stop()); _hostPollers = {};
-  Object.values(hostPcs).forEach(pc=>{ try{ pc.close(); }catch(e){} }); hostPcs = {};
-  hostChannels = {};
-  if(clientPc){ try{ clientPc.close(); }catch(e){} clientPc = null; }
-  clientChannel = null;
+  if(ws){ try{ ws.close(); }catch(e){} ws = null; }
   document.getElementById('podium-screen').style.display='none';
   document.getElementById('game-outer').style.display='none';
   document.getElementById('host-room').style.display='none';
@@ -1149,6 +872,9 @@ function resetToLobby(){
 // ═══════════════════════════════════════════════════════
 // RANKING HUD
 // ═══════════════════════════════════════════════════════
+// IDs de los jugadores actualmente en el top-3 (se actualiza cada frame)
+let _top3Ids = new Set();
+
 function updateRankingHUD(){
   // Si es host espectador, solo usar estados remotos (no tiene carro propio)
   const allStates = { ...remoteStates };
@@ -1163,6 +889,9 @@ function updateRankingHUD(){
     const p = players[id] || { name: id.substring(0,6), color: '#888' };
     return { id, name: p.name, color: p.color, laps: s.laps||0, progress, finished: s.finished };
   }).sort((a,b)=> b.progress - a.progress);
+
+  // Actualizar set de top-3 para que el render los dibuje
+  _top3Ids = new Set(ranked.slice(0, 3).map(r => r.id));
 
   const rows = document.getElementById('ranking-rows');
   rows.innerHTML = '';
@@ -1798,20 +1527,22 @@ function gameLoop(ts){
   // Render adaptativo: con >8 jugadores, saltar 1 de cada 2 frames de dibujado
   // Esto libera ~50% de GPU/CPU para la lógica de red sin afectar la jugabilidad
   const pc = _playerCount();
-  _renderSkip = (_renderSkip + 1) % (pc > 8 ? 2 : 1);
+  // Con >6 jugadores renderizar a ~30fps, con >12 a ~20fps
+  _renderSkip = (_renderSkip + 1) % (pc > 12 ? 3 : pc > 6 ? 2 : 1);
   if(_renderSkip === 0){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     drawTrack();
     drawObstacles();
 
-    // Ordenar remotos por distancia para dibujar los más cercanos al final (encima)
+    // Solo dibujar los jugadores del top-3 (excluir a sí mismo si está en top-3)
+    // Esto elimina el principal cuello de botella de render con muchos jugadores
     const remoteList = Object.entries(remoteStates)
-      .filter(([pid])=> pid !== myId)
+      .filter(([pid])=> pid !== myId && _top3Ids.has(pid))
       .map(([pid, s])=>{
         const dx=s.x-car.x, dy=s.y-car.y;
         return { pid, s, dist: dx*dx+dy*dy };
       })
-      .sort((a,b)=> b.dist - a.dist); // lejanos primero
+      .sort((a,b)=> b.dist - a.dist); // lejanos primero, cercanos encima
 
     remoteList.forEach(({pid, s})=>{
       const p = players[pid] || { name: '?', color: '#888' };
