@@ -694,7 +694,11 @@ function handleClientMessage(d){
   if(d.type === 'relay-state' || d.type === 'host-state'){
     remoteStates[d.fromId] = d.state; checkMultiFinish(d.fromId, d.state);
   }
-  if(d.type === 'podium'){ finishers = d.finishers; if(!podiumShown) showPodium(); }
+  if(d.type === 'podium'){
+    finishers = d.finishers;
+    podiumShown = false; // resetear para que el primero también lo vea
+    showPodium();
+  }
   if(d.type === 'back-to-lobby') resetToLobby();
 }
 
@@ -1426,19 +1430,12 @@ function updateCar(dt=1){
       myFinished=true;
       // Avisar al host inmediatamente con f:1 (bypass throttle)
       stateThrottle = 0; _lastSentState = null;
-      sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
-        a:Math.round(car.angle*100)/100, l:3, f:1 });
-      // Reenviar 3 veces para garantizar entrega
-      setTimeout(()=>sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
-        a:Math.round(car.angle*100)/100, l:3, f:1 }), 200);
-      setTimeout(()=>sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
-        a:Math.round(car.angle*100)/100, l:3, f:1 }), 500);
-      // Si soy host-jugador (no aplica en v35 pero por si acaso)
-      if(isHost){
-        const p = players[myId] || {name:myName, color:myColor};
-        finishers.push({ id:myId, name:p.name, color:p.color, laps:3 });
-        checkEndCondition();
-      }
+      const _fx = Math.round(car.x*10)/10, _fy = Math.round(car.y*10)/10, _fa = Math.round(car.angle*100)/100;
+      sendToHost({ t:'s', x:_fx, y:_fy, a:_fa, l:3, f:1 });
+      // Reenviar 3 veces para garantizar entrega — el podio lo muestra el host
+      setTimeout(()=>sendToHost({ t:'s', x:_fx, y:_fy, a:_fa, l:3, f:1 }), 200);
+      setTimeout(()=>sendToHost({ t:'s', x:_fx, y:_fy, a:_fa, l:3, f:1 }), 600);
+      // NO llamar showPodium() aquí — esperar el broadcast del host para que todos vean el mismo podio
     }
   }
   if(dist>65) lapCrossed=false;
