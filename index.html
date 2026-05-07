@@ -391,6 +391,8 @@ const NAMES_POOL = [
 ];
 
 function randomName(){ return NAMES_POOL[Math.floor(Math.random()*NAMES_POOL.length)] + ' ' + Math.floor(Math.random()*99+1); }
+function genCode(){ const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<6;i++) s+=c[Math.floor(Math.random()*c.length)]; return s; }
+function genId(){ return Math.random().toString(36).slice(2,10)+Date.now().toString(36); }
 
 // ═══════════════════════════════════════════════════════
 // ESTADO GLOBAL MULTIJUGADOR
