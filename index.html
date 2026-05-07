@@ -479,12 +479,12 @@ function wsConnect(onOpen){
   ws.onopen  = onOpen;
   ws.onerror = e => showErr('Error de conexión con el servidor. Verifica que el servidor esté activo.');
   ws.onclose = () => {
-    // Reconectar si hay una partida activa
     if(gameRunning) setTimeout(()=>wsConnect(()=>{}), 2000);
   };
+  // Un único onmessage central — nunca se sobreescribe
   ws.onmessage = ev => {
     let d; try{ d = JSON.parse(ev.data); }catch{ return; }
-    if(isHost) handleHostMessage(d);
+    if(isHost) _handleHostMsg(d);
     else       handleClientMessage(d);
   };
 }
@@ -518,28 +518,25 @@ function showHostRoom(){
   wsConnect(() => {
     wsSend({ type:'host-create', code: roomCode });
   });
+}
 
-  ws.onmessage = ev => {
-    let d; try{ d = JSON.parse(ev.data); }catch{ return; }
-    if(d.type === 'host-ready'){
-      document.getElementById('room-code').textContent = roomCode;
-      refreshHostList();
-      // Heartbeat cada 20s para mantener sala viva
-      _hostHeartbeat = setInterval(()=>{
-        wsSend({ type:'host-ping', code: roomCode });
-      }, 20000);
-    }
-    else if(d.type === 'client-connected'){
-      handleNewClient(d.clientId);
-    }
-    else if(d.type === 'client-disconnected'){
-      onClientLeft(d.clientId);
-    }
-    else {
-      // Mensajes de clientes (ya vienen con _from del servidor)
-      handleHostData(d._from, d);
-    }
-  };
+function _handleHostMsg(d){
+  if(d.type === 'host-ready'){
+    document.getElementById('room-code').textContent = roomCode;
+    refreshHostList();
+    _hostHeartbeat = setInterval(()=>{
+      wsSend({ type:'host-ping', code: roomCode });
+    }, 20000);
+  }
+  else if(d.type === 'client-connected'){
+    handleNewClient(d.clientId);
+  }
+  else if(d.type === 'client-disconnected'){
+    onClientLeft(d.clientId);
+  }
+  else {
+    handleHostData(d._from, d);
+  }
 }
 
 function handleNewClient(clientId){
