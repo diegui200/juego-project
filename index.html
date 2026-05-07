@@ -708,7 +708,7 @@ function handleHostData(pid,d){
       ? { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f }
       : d.state;
     remoteStates[pid]=state;
-    if(state.laps>=5&&!state.finished) state.finished=true;
+    if(state.laps>=3&&!state.finished) state.finished=true;
     checkMultiFinish(pid,state);
     // Relay también comprimido para ahorrar ancho de banda en el host
     const relay = { t:'r', id:pid, x:state.x, y:state.y, a:state.angle, l:state.laps, f:state.finished?1:0 };
@@ -1038,10 +1038,16 @@ function spectatorLoop(ts){
 // ═══════════════════════════════════════════════════════
 function checkMultiFinish(pid, state){
   if(!gameRunning) return;
-  if(state.laps >= 5 && !finishers.find(f=>f.id===pid)){
+  if(state.laps >= 3 && !finishers.find(f=>f.id===pid)){
     const p = players[pid] || { id: pid, name: 'Jugador', color: '#888' };
     finishers.push({ id: pid, name: p.name, color: p.color, laps: state.laps });
-    if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
+    // Total real de jugadores: los que están en players + los que ya terminaron
+    // (por si alguno salió de players al desconectarse después de terminar)
+    const knownIds = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
+    const totalPlayers = knownIds.size;
+    // El juego termina cuando lleguen los primeros 3, o todos si son menos de 3
+    const neededToEnd = Math.min(3, totalPlayers);
+    if(finishers.length >= neededToEnd){
       if(isHost) broadcastToClients({ type:'podium', finishers });
       if(!podiumShown) showPodium();
     }
@@ -1557,7 +1563,7 @@ function updateCar(dt=1){
     let len=Math.sqrt(pushX*pushX+pushY*pushY)||1;
     car.x+=pushX/len*1.5*dt; car.y+=pushY/len*1.5*dt; car.speed*=0.7;
   }
-  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.10*dt);
+  if(car.speed>0.3) car.fuel=Math.max(0,car.fuel-0.04*dt);
   let margin=14;
   if(car.y<margin){car.y=margin; if(car.speed>0)car.speed*=0.5;}
   if(car.y>canvas.height-margin){car.y=canvas.height-margin; if(car.speed>0)car.speed*=0.5;}
@@ -1581,7 +1587,7 @@ function updateCar(dt=1){
       o.cooldown=now+8000;
       car.stunEnd=now+1200;
       car.spinVel=(Math.random()>0.5?1:-1)*0.18;
-      car.speed=-1.5;
+      car.speed=1.5;
       car.fuel=Math.max(0,car.fuel-10);
       spawnHit(car.x,car.y);
       sfxCrash();
@@ -1601,11 +1607,13 @@ function updateCar(dt=1){
   if(!carMidPassed && midDist<38) carMidPassed=true;
   if(!lapCrossed && dist<32 && car.speed>0.5 && carMidPassed){
     lapCrossed=true; carMidPassed=false; car.laps++; car.score+=50;
-    if(car.laps>=5 && !myFinished){
+    if(car.laps>=3 && !myFinished){
       myFinished=true;
       const p = players[myId] || {name: myName, color: myColor};
-      finishers.push({ id: myId, name: p.name, color: p.color, laps: 5 });
-      if(finishers.length >= 3 || finishers.length >= Object.keys(players).length){
+      finishers.push({ id: myId, name: p.name, color: p.color, laps: 3 });
+      const knownIds2 = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
+      const neededToEnd2 = Math.min(3, knownIds2.size);
+      if(finishers.length >= neededToEnd2){
         if(isHost) broadcastToClients({ type:'podium', finishers });
         if(!podiumShown) showPodium();
       }
@@ -1639,7 +1647,7 @@ function closePits(){ car.fuel=50; document.getElementById('pits-panel').style.d
 
 // ─── HUD ──────────────────────────────────────────────
 function updateHUD(){
-  document.getElementById('laps').textContent=car.laps+'/5';
+  document.getElementById('laps').textContent=car.laps+'/3';
   document.getElementById('spd').textContent=Math.round(Math.abs(car.speed)*10);
   let f=Math.round(car.fuel);
   document.getElementById('fuel-num').textContent=f;
