@@ -410,7 +410,8 @@ let selectedTrack = 1;
 let players = {};         // peerId → playerInfo
 
 // estado en juego de cada jugador: { x, y, angle, laps, finished, finishTime }
-let remoteStates = {};    // peerId → state
+let remoteStates = {};    // peerId → state (interpolado)
+let _remoteTargets = {};  // peerId → { x,y,angle,laps,finished, ts }
 
 let myFinished = false;
 let finishers = [];       // orden de llegada [{id,name,color,laps}]
@@ -559,6 +560,7 @@ function handleNewClient(clientId){
 function onClientLeft(clientId){
   delete players[clientId];
   delete remoteStates[clientId];
+  delete _remoteTargets[clientId];
   broadcastToClients({ type:'players-update', players });
   refreshHostList();
 }
@@ -659,8 +661,13 @@ function handleClientMessage(d){
     launchGame(selectedTrack, players);
   }
   if(d.t === 'r'){
-    const state = { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f };
-    remoteStates[d.id] = state; checkMultiFinish(d.id, state);
+    const state = { x:d.x, y:d.y, angle:d.a, laps:d.l, finished:!!d.f, ts:Date.now() };
+    _remoteTargets[d.id] = state;
+    // laps/finished se aplican directo (no interpolados)
+    if(!remoteStates[d.id]) remoteStates[d.id] = Object.assign({}, state);
+    remoteStates[d.id].laps = state.laps;
+    remoteStates[d.id].finished = state.finished;
+    checkMultiFinish(d.id, state);
   }
   if(d.type === 'relay-state' || d.type === 'host-state'){
     remoteStates[d.fromId] = d.state; checkMultiFinish(d.fromId, d.state);
@@ -743,24 +750,21 @@ function launchSpectator(){
 }
 
 let _lastSpectatorTime = 0;
-let _specSkip = 0;
 function spectatorLoop(ts){
   if(!gameRunning) return;
+  const dt = _lastSpectatorTime ? Math.min((ts - _lastSpectatorTime)/(1000/60), 3) : 1;
   _lastSpectatorTime = ts;
-  // Espectador solo necesita ~20fps, no 60fps
-  _specSkip = (_specSkip+1)%3;
-  if(_specSkip===0){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    drawTrack();
-    drawObstacles();
-    // El espectador usa distancia ficticia (centro de pantalla) para LOD
-    car.x = canvas.width/2; car.y = canvas.height/2;
-    Object.entries(remoteStates).forEach(([pid, s])=>{
-      const p = players[pid] || { name:'?', color:'#888' };
-      drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
-    });
-    drawParticles();
-    updateRankingHUD();
+  interpolateRemotes(dt);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawTrack();
+  drawObstacles();
+  car.x = canvas.width/2; car.y = canvas.height/2;
+  Object.entries(remoteStates).forEach(([pid, s])=>{
+    const p = players[pid] || { name:'?', color:'#888' };
+    drawRemoteCar(s.x, s.y, s.angle, p.color, p.name);
+  });
+  drawParticles();
+  updateRankingHUD();
   }
   requestAnimationFrame(spectatorLoop);
 }
@@ -863,7 +867,7 @@ function resetToLobby(){
   document.getElementById('host-room').style.display='none';
   document.getElementById('client-room').style.display='none';
   gameRunning = false;
-  players = {}; remoteStates = {}; finishers = [];
+  players = {}; remoteStates = {}; _remoteTargets = {}; finishers = [];
   isHost = false;
   document.getElementById('lobby').style.display='flex';
 }
@@ -1232,6 +1236,22 @@ function drawCar(x,y,angle,color,alpha,showFuel){
 }
 
 // Draw a remote car — LOD (Level of Detail) por distancia al jugador local
+function interpolateRemotes(dt){
+  const LERP = Math.min(0.35 * dt, 1); // velocidad de interpolación
+  const now = Date.now();
+  for(const [pid, tgt] of Object.entries(_remoteTargets)){
+    if(!remoteStates[pid]) remoteStates[pid] = Object.assign({}, tgt);
+    const s = remoteStates[pid];
+    s.x     += (tgt.x - s.x) * LERP;
+    s.y     += (tgt.y - s.y) * LERP;
+    // Interpolación de ángulo por el camino más corto
+    let da = tgt.angle - s.angle;
+    while(da >  Math.PI) da -= Math.PI*2;
+    while(da < -Math.PI) da += Math.PI*2;
+    s.angle += da * LERP;
+  }
+}
+
 function drawRemoteCar(x, y, angle, color, name){
   // Calcular distancia al carro local
   const dx = x - car.x, dy = y - car.y;
