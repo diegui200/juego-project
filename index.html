@@ -721,6 +721,7 @@ function launchGame(track, pls){
   players = pls;
   // Asegurarse de que el host no esté en la lista de jugadores
   if(isHost && players[myId]) delete players[myId];
+  _totalPlayersAtStart = Object.keys(players).length;
 
   resize(); scaleCanvas();
   setTimeout(scaleCanvas, 50);
@@ -799,12 +800,15 @@ function spectatorLoop(ts){
 // ═══════════════════════════════════════════════════════
 // MULTIPLAYER FINISH CHECK
 // ═══════════════════════════════════════════════════════
+let _totalPlayersAtStart = 0;
+
 function checkEndCondition(){
-  const knownIds = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
-  const totalPlayers = knownIds.size;
+  // Usar el conteo fijo del inicio de partida para no confundirse con desconexiones
+  const total = _totalPlayersAtStart || Object.keys(players).length;
   let neededToEnd;
-  if(totalPlayers <= 2) neededToEnd = 1;
-  else if(totalPlayers === 3) neededToEnd = 2;
+  if(total <= 1) neededToEnd = 1;
+  else if(total === 2) neededToEnd = 1;
+  else if(total === 3) neededToEnd = 2;
   else neededToEnd = 3;
   if(finishers.length >= neededToEnd){
     if(isHost) broadcastToClients({ type:'podium', finishers });
@@ -916,7 +920,7 @@ function resetToLobby(){
   if(hlb) hlb.style.display='none';
   const rkHud = document.getElementById('ranking-hud');
   if(rkHud) rkHud.style.display='';
-  players = {}; remoteStates = {}; _remoteTargets = {}; finishers = [];
+  players = {}; remoteStates = {}; _remoteTargets = {}; finishers = []; _totalPlayersAtStart = 0;
   isHost = false;
   document.getElementById('lobby').style.display='flex';
 }
