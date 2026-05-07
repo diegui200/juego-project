@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v31 — Multijugador</title>
+<title>Trivia Racer v32 — Multijugador</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -322,7 +322,7 @@ canvas { display: block; width: 820px; height: 430px; }
       <h2>⚡ TRIVIA RACER</h2>
     </div>
     <div id="trivia-panel">
-      <h3>⛽ RECARGA DE COMBUSTIBLE</h3>
+      <h3 id="trivia-header-txt">⛽ RECARGA DE COMBUSTIBLE</h3>
       <div id="trivia-question"></div>
       <div class="opts" id="opts-wrap"></div>
       <div id="trivia-result"></div>
@@ -462,63 +462,42 @@ function refreshClientList(){
 
 const FIREBASE_URL = 'https://juego-bc002-default-rtdb.firebaseio.com';
 
+// ICE servers — STUN gratuito de Google (solo para atravesar NAT,
+// no necesita estar "vivo" constantemente como PeerJS)
+// STUN + TURN servers
+// TURN garantiza conexión entre cualquier red (WiFi, datos móviles, NAT estricto)
+// ─── TURN servers ─────────────────────────────────────
+// Usamos múltiples TURN públicos y gratuitos para garantizar
+// conectividad entre redes distintas (datos móviles, NAT estricto, etc.)
+// Si uno falla, WebRTC prueba el siguiente automáticamente.
 // ═══════════════════════════════════════════════════════
-// TURN SERVER — Metered.ca (cuenta personal de Diego)
-// Credenciales frescas obtenidas via API en cada conexión
+// TURN credentials — para registrar las tuyas (gratis):
+// 1. https://dashboard.metered.ca/signup
+// 2. Copia username y credential de "TURN Credentials"
+// 3. Reemplaza METERED_USER y METERED_CRED abajo
 // ═══════════════════════════════════════════════════════
-const METERED_DOMAIN = 'juego.metered.live';
-const METERED_KEY    = 'mgzVUwxWV1EUdm5mXpr-bpj-SZN87baNomy7bNOg3oeYOnmf';
+const METERED_USER = 'openrelayproject';
+const METERED_CRED = 'openrelayproject';
 
-// Cache de ICE config para no pedir credenciales múltiples veces por sesión
-let _iceCfgCache = null;
-
-async function getIceCfg(){
-  if(_iceCfgCache) return _iceCfgCache;
-  try {
-    console.log('[TURN] Pidiendo credenciales a Metered...');
-    const r = await fetch(
-      `https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_KEY}`
-    );
-    if(r.ok){
-      const servers = await r.json();
-      console.log('[TURN] Metered OK —', servers.length, 'servers:', JSON.stringify(servers));
-      _iceCfgCache = {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          ...servers
-        ],
-        iceCandidatePoolSize: 8,
-        iceTransportPolicy: 'all',
-      };
-      return _iceCfgCache;
-    } else {
-      console.warn('[TURN] Metered HTTP', r.status);
-    }
-  } catch(e){ console.warn('[TURN] Metered fetch falló:', e.message); }
-
-  // Fallback
-  console.warn('[TURN] Usando servidores públicos de respaldo');
-  _iceCfgCache = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'turn:openrelay.metered.ca:80',               username:'openrelayproject', credential:'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443',              username:'openrelayproject', credential:'openrelayproject' },
-      { urls: 'turns:openrelay.metered.ca:443',             username:'openrelayproject', credential:'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject', credential:'openrelayproject' },
-      { urls: 'turn:freestun.net:3478', username:'free', credential:'free' },
-      { urls: 'turns:freestun.net:5349',username:'free', credential:'free' },
-    ],
-    iceCandidatePoolSize: 8,
-    iceTransportPolicy: 'all',
-  };
-  return _iceCfgCache;
-}
-
-// Precargar ICE config al cargar la página para que esté listo al conectar
-window.addEventListener('load', ()=>{ getIceCfg(); });
-
+const ICE_CFG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // TURN #1 — freestun (sin cuenta, muy confiable)
+    { urls: 'turn:freestun.net:3478',          username:'free', credential:'free' },
+    { urls: 'turns:freestun.net:5349',         username:'free', credential:'free' },
+    { urls: 'turn:freestun.net:3479',          username:'free', credential:'free' },
+    // TURN #2 — expressturn
+    { urls: 'turn:relay1.expressturn.com:3478', username:'efQCBH5NWHQ4BI2FMR', credential:'rRJpzMHvVXNqxRrU' },
+    // TURN #3 — openrelay metered
+    { urls: 'turn:openrelay.metered.ca:80',              username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443',             username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:METERED_USER, credential:METERED_CRED },
+    { urls: 'turns:openrelay.metered.ca:443',            username:METERED_USER, credential:METERED_CRED },
+  ],
+  iceCandidatePoolSize: 10,
+  iceTransportPolicy: 'all',
+};
 
 function genCode(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -630,8 +609,7 @@ async function hostAcceptClient(clientId, offerSDP){
     fbMerge(`rooms/${roomCode}/clients/${clientId}`,{rejected:true}); return;
   }
 
-  const iceCfg = await getIceCfg();
-  const pc = new RTCPeerConnection(iceCfg);
+  const pc=new RTCPeerConnection(ICE_CFG);
   hostPcs[clientId]=pc;
 
   pc.oniceconnectionstatechange=()=>console.log('[HOST ICE]',clientId,pc.iceConnectionState);
@@ -785,21 +763,42 @@ async function joinRoom(){
   if(nameVal) document.getElementById('name-input').value=nameVal;
   setStatus('[1/5] Creando conexión WebRTC...');
 
-  const iceCfg = await getIceCfg();
-  clientPc=new RTCPeerConnection(iceCfg);
+  clientPc=new RTCPeerConnection(ICE_CFG);
 
   // Mostrar cambios de estado ICE en pantalla
   clientPc.oniceconnectionstatechange=()=>{
     const s=clientPc.iceConnectionState;
-    console.log('[ICE]', s);
-    if(s==='checking') setStatus('Probando rutas de conexión...');
+    if(s==='checking') setStatus('[4/5] Probando rutas de conexión (puede tardar 15-30s desde redes distintas)...');
     if(s==='connected'||s==='completed') setStatus('✓ Conectado — abriendo canal de datos...');
     if(s==='disconnected'){
-      setStatus('⚠️ Señal intermitente, reintentando...');
+      setStatus('⚠️ Conexión intermitente, reintentando...');
+      // ICE restart automático al desconectarse
       try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
     }
     if(s==='failed'){
-      setStatus('❌ No se pudo conectar. Cierra y vuelve a intentar.');
+      setStatus('⏳ Conectando vía servidor relay... (puede tardar hasta 20s)');
+      // Reintentar ICE automáticamente usando solo servidores TURN
+      try{
+        if(clientPc.restartIce) clientPc.restartIce();
+      }catch(e){}
+      // Forzar recolección de nuevos candidatos TURN
+      setTimeout(async()=>{
+        if(clientPc&&clientPc.iceConnectionState==='failed'){
+          try{
+            const offer=await clientPc.createOffer({iceRestart:true});
+            await clientPc.setLocalDescription(offer);
+            // Reenviar offer a Firebase para que el host responda
+            await fbSet(`rooms/${roomCode}/clients/${myId}`,{
+              offer: clientPc.localDescription.sdp,
+              clientIce: [],
+              ts: Date.now(),
+              restart: true
+            });
+            setStatus('⏳ Reenviando conexión al host...');
+          }catch(e){ setStatus('❌ No se pudo conectar. Intenta de nuevo.'); }
+        }
+      }, 2000);
+      try{ if(clientPc.restartIce) clientPc.restartIce(); }catch(e){}
     }
   };
   clientPc.onconnectionstatechange=()=>{
@@ -1440,7 +1439,17 @@ function drawSkull(x,y,r,alpha){
 
 function drawObstacles(){
   let now=Date.now();
-  obstacles.forEach(o=>{ let a=now<o.cooldown?0.25:1; drawSkull(o.x,o.y,o.r,a); });
+  obstacles.forEach(o=>{
+    if(now<o.cooldown){
+      // Verificar si el carro está encima — si sí, no dibujar nada
+      let dx=car.x-o.x, dy=car.y-o.y;
+      let onTop = Math.sqrt(dx*dx+dy*dy) < (o.r+9)*2;
+      if(onTop) return; // invisible mientras el carro está encima
+      drawSkull(o.x,o.y,o.r,0.25); // fantasma cuando está en cooldown pero carro lejos
+    } else {
+      drawSkull(o.x,o.y,o.r,1);
+    }
+  });
 }
 
 // ─── PARTICLES ────────────────────────────────────────
@@ -1557,12 +1566,27 @@ function updateCar(dt=1){
   if(car.fuel<=0&&!pitsActive){car.fuel=0; showPits(); return;}
 
   obstacles.forEach(o=>{
-    if(Date.now()<o.cooldown) return;
+    let now=Date.now();
+    // Si está en cooldown, verificar si el carro ya se alejó para reaparecer
+    if(now<o.cooldown){
+      let dx=car.x-o.x,dy=car.y-o.y;
+      let dist=Math.sqrt(dx*dx+dy*dy);
+      // Solo reaparece si el carro ya está lejos (radio de seguridad = 2x el radio)
+      if(dist < (o.r+9)*2) o.cooldown=Math.max(o.cooldown, now+500);
+      return;
+    }
     let dx=car.x-o.x,dy=car.y-o.y;
     if(Math.sqrt(dx*dx+dy*dy)<o.r+9){
-      o.cooldown=Date.now()+3500; car.stunEnd=Date.now()+1200;
+      // Cooldown largo — el charco no reaparece hasta que el carro se aleje
+      o.cooldown=now+8000;
+      car.stunEnd=now+1200;
       car.spinVel=(Math.random()>0.5?1:-1)*0.18;
-      car.speed=-1.5; car.fuel=Math.max(0,car.fuel-10); spawnHit(car.x,car.y); sfxCrash();
+      car.speed=-1.5;
+      car.fuel=Math.max(0,car.fuel-10);
+      spawnHit(car.x,car.y);
+      sfxCrash();
+      // Mostrar trivia de penalización por charco
+      showCrashTrivia();
     }
   });
 
@@ -1695,6 +1719,61 @@ function answerQ(chosen,correct,btn){
 }
 
 function closeTrivia(){ document.getElementById('trivia-panel').style.display='none'; triviaActive=false; }
+
+// ─── TRIVIA DE CHARCO ─────────────────────────────────
+const CRASH_WIN_PHRASES=[
+  "¡Rápido reflejos! Sigue adelante. 🏎️",
+  "¡Correcto! El charco no pudo contigo. 💪",
+  "¡Genio! Te salvaste del charco. ⚡",
+  "¡Exacto! Fuera del charco. 🚀",
+  "¡Bien! Sigues en carrera. 🏁",
+];
+const CRASH_LOSE_PHRASES=[
+  "¡Fallaste! El charco te cuesta tiempo.",
+  "Respuesta incorrecta — penalización extra.",
+  "No era esa... el charco gana esta vez.",
+  "¡Uy! Tiempo de penalización aumentado.",
+];
+
+function showCrashTrivia(){
+  if(triviaActive) return; // si ya hay trivia abierta, no abrir otra
+  triviaActive=true;
+  let q=getQuestion();
+  // Personalizar el panel para charco
+  document.getElementById('trivia-header-txt').textContent='💧 CHARCO — RESPONDE PARA SALIR';
+  document.getElementById('trivia-question').textContent=q.q;
+  let ow=document.getElementById('opts-wrap'); ow.innerHTML='';
+  document.getElementById('trivia-result').textContent='';
+  q.opts.forEach((o,i)=>{
+    let b=document.createElement('button'); b.className='opt-btn'; b.textContent=o;
+    b.onclick=()=>answerCrash(i,q.ans,b); ow.appendChild(b);
+  });
+  document.getElementById('trivia-panel').style.display='flex';
+}
+
+function answerCrash(chosen,correct,btn){
+  document.querySelectorAll('.opt-btn').forEach(b=>b.onclick=null);
+  let corrBtn=document.querySelectorAll('.opt-btn')[correct];
+  let res=document.getElementById('trivia-result');
+  if(chosen===correct){
+    btn.classList.add('correct'); res.style.color='#00c896';
+    res.textContent=CRASH_WIN_PHRASES[Math.floor(Math.random()*CRASH_WIN_PHRASES.length)];
+    // Respuesta correcta: stun termina antes
+    car.stunEnd=0;
+    sfxCorrect();
+  } else {
+    btn.classList.add('wrong'); corrBtn.classList.add('correct');
+    res.style.color='#e94560';
+    res.textContent=CRASH_LOSE_PHRASES[Math.floor(Math.random()*CRASH_LOSE_PHRASES.length)];
+    // Respuesta incorrecta: stun más largo
+    car.stunEnd=Date.now()+3000;
+    sfxWrong();
+  }
+  setTimeout(()=>{
+    document.getElementById('trivia-header-txt').textContent='⛽ RECARGA DE COMBUSTIBLE';
+    closeTrivia();
+  }, 2000);
+}
 
 // ─── GAME LOOP ────────────────────────────────────────
 let _lastFrameTime = 0;
