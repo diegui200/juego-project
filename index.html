@@ -121,6 +121,27 @@ html, body { background: #0a0a14; display: flex; justify-content: center; align-
 #client-players-list::-webkit-scrollbar-track { background: #0f0f1a; border-radius: 8px; }
 #client-players-list::-webkit-scrollbar-thumb { background: #444; border-radius: 8px; }
 
+/* ── HOST LEADERBOARD ── */
+#host-leaderboard {
+  display: none;
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: #0d0d1a;
+  flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px; gap: 10px; z-index: 20;
+}
+.hlb-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; max-width: 560px;
+  background: #1a1a2e; border-radius: 10px; padding: 10px 16px;
+  border: 1.5px solid #333; transition: border-color .3s;
+}
+.hlb-row.hlb-done { border-color: #f5a623; background: #1e1a10; }
+.hlb-pos { font-size: 20px; width: 32px; text-align: center; }
+.hlb-dot { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+.hlb-name { font-size: 14px; color: #fff; font-weight: bold; min-width: 100px; letter-spacing: 1px; }
+.hlb-bar-wrap { flex: 1; height: 10px; background: #333; border-radius: 6px; overflow: hidden; }
+.hlb-bar { height: 100%; background: linear-gradient(90deg, #e94560, #f5a623); border-radius: 6px; transition: width .4s ease; }
+.hlb-laps { font-size: 12px; color: #aaa; min-width: 52px; text-align: right; }
 /* ── PODIUM ── */
 #podium-screen {
   position: fixed; inset: 0; background: rgba(5,5,15,0.97);
@@ -314,7 +335,7 @@ canvas { display: block; width: 820px; height: 430px; }
 <div id="game-outer" style="display:none;">
 <div id="game-wrap">
   <div id="hud">
-    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/5</span></div>
+    <div class="hud-item"><span class="hud-label">Vueltas</span><span class="hud-val" id="laps">0/3</span></div>
     <div class="hud-item"><span class="hud-label">Vel</span><span class="hud-val" id="spd">0</span></div>
     <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:100px;">
       <span style="color:#f5a623;font-size:13px;">⛽</span>
@@ -330,6 +351,7 @@ canvas { display: block; width: 820px; height: 430px; }
       <div class="rk-title">POSICIONES</div>
       <div id="ranking-rows"></div>
     </div>
+    <div id="host-leaderboard"></div>
     <div id="overlay" style="display:none;">
       <h2>⚡ TRIVIA RACER</h2>
     </div>
@@ -718,6 +740,12 @@ function launchGame(track, pls){
 }
 
 function launchSpectator(){
+  // Host ve leaderboard, no la pista
+  document.getElementById('host-leaderboard').style.display = 'flex';
+  document.getElementById('ranking-hud').style.display = 'none';
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('status-bar').style.display = 'none';
+  document.getElementById('controls').style.display = 'none';
   // El host ve todos los carros moviéndose pero no juega
   // Ocultar controles e HUD de jugador, mostrar solo ranking
   document.getElementById('controls').style.display = 'none';
@@ -771,21 +799,25 @@ function spectatorLoop(ts){
 // ═══════════════════════════════════════════════════════
 // MULTIPLAYER FINISH CHECK
 // ═══════════════════════════════════════════════════════
+function checkEndCondition(){
+  const knownIds = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
+  const totalPlayers = knownIds.size;
+  let neededToEnd;
+  if(totalPlayers <= 2) neededToEnd = 1;
+  else if(totalPlayers === 3) neededToEnd = 2;
+  else neededToEnd = 3;
+  if(finishers.length >= neededToEnd){
+    if(isHost) broadcastToClients({ type:'podium', finishers });
+    if(!podiumShown) showPodium();
+  }
+}
+
 function checkMultiFinish(pid, state){
   if(!gameRunning) return;
-  if(state.laps >= 3 && !finishers.find(f=>f.id===pid)){
-    const p = players[pid] || { id: pid, name: 'Jugador', color: '#888' };
-    finishers.push({ id: pid, name: p.name, color: p.color, laps: state.laps });
-    // Total real de jugadores: los que están en players + los que ya terminaron
-    // (por si alguno salió de players al desconectarse después de terminar)
-    const knownIds = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
-    const totalPlayers = knownIds.size;
-    // El juego termina cuando lleguen los primeros 3, o todos si son menos de 3
-    const neededToEnd = Math.min(3, totalPlayers);
-    if(finishers.length >= neededToEnd){
-      if(isHost) broadcastToClients({ type:'podium', finishers });
-      if(!podiumShown) showPodium();
-    }
+  if((state.laps >= 3 || state.f) && !finishers.find(f=>f.id===pid)){
+    const p = players[pid] || { id:pid, name:'Jugador', color:'#888' };
+    finishers.push({ id:pid, name:p.name, color:p.color, laps:3 });
+    checkEndCondition();
   }
 }
 
@@ -880,6 +912,10 @@ function resetToLobby(){
   document.getElementById('host-room').style.display='none';
   document.getElementById('client-room').style.display='none';
   gameRunning = false;
+  const hlb = document.getElementById('host-leaderboard');
+  if(hlb) hlb.style.display='none';
+  const rkHud = document.getElementById('ranking-hud');
+  if(rkHud) rkHud.style.display='';
   players = {}; remoteStates = {}; _remoteTargets = {}; finishers = [];
   isHost = false;
   document.getElementById('lobby').style.display='flex';
@@ -891,42 +927,56 @@ function resetToLobby(){
 // IDs de los jugadores actualmente en el top-3 (se actualiza cada frame)
 let _top3Ids = new Set();
 
-function updateRankingHUD(){
-  // Si es host espectador, solo usar estados remotos (no tiene carro propio)
+function getRanked(){
   const allStates = { ...remoteStates };
-  if(!isHost){
-    allStates[myId] = { x: car.x, y: car.y, angle: car.angle, laps: car.laps, finished: myFinished };
+  if(!isHost) allStates[myId] = { x:car.x, y:car.y, angle:car.angle, laps:car.laps, finished:myFinished };
+  return Object.entries(allStates).map(([id, s])=>{
+    const cp = closestPointOnTrack(s.x, s.y);
+    const progress = (s.laps||0)*10000 + cp.idx;
+    const p = players[id] || { name:id.substring(0,6), color:'#888' };
+    return { id, name:p.name, color:p.color, laps:s.laps||0, progress, finished:s.finished };
+  }).sort((a,b)=>b.progress - a.progress);
+}
+
+function updateRankingHUD(){
+  const ranked = getRanked();
+  _top3Ids = new Set(ranked.slice(0,3).map(r=>r.id));
+
+  if(isHost){
+    // El host ve una tabla grande en vez de la pista
+    updateHostLeaderboard(ranked);
+    return;
   }
 
-  // Calcular progreso: laps * 1000 + avance en pista (índice más cercano)
-  const ranked = Object.entries(allStates).map(([id, s])=>{
-    const cp = closestPointOnTrack(s.x, s.y);
-    const progress = (s.laps || 0) * 10000 + cp.idx;
-    const p = players[id] || { name: id.substring(0,6), color: '#888' };
-    return { id, name: p.name, color: p.color, laps: s.laps||0, progress, finished: s.finished };
-  }).sort((a,b)=> b.progress - a.progress);
-
-  // Actualizar set de top-3 para que el render los dibuje
-  _top3Ids = new Set(ranked.slice(0, 3).map(r => r.id));
-
+  // Clientes: top 5 en el HUD lateral
   const rows = document.getElementById('ranking-rows');
   rows.innerHTML = '';
-  ranked.slice(0, 8).forEach((p, i)=>{
+  ranked.slice(0,5).forEach((p,i)=>{
     const row = document.createElement('div');
-    // El host no se marca a sí mismo como "me" en el ranking
-    row.className = 'rk-row' + (!isHost && p.id===myId?' me':'') + (p.finished?' finished':'');
+    row.className = 'rk-row'+(p.id===myId?' me':'')+(p.finished?' finished':'');
     row.innerHTML = `<span class="rk-pos">${i+1}</span>
       <div class="rk-dot" style="background:${p.color}"></div>
       <span class="rk-name">${p.name}</span>
-      <span class="rk-laps">${p.laps}/5</span>`;
+      <span class="rk-laps">${p.laps}/3</span>`;
     rows.appendChild(row);
   });
+  const myRank = ranked.findIndex(p=>p.id===myId);
+  document.getElementById('my-pos').textContent = myRank>=0?(myRank+1)+'°':'-';
+}
 
-  // Update my position badge (solo aplica a jugadores, no al host)
-  if(!isHost){
-    const myRank = ranked.findIndex(p=>p.id===myId);
-    document.getElementById('my-pos').textContent = myRank>=0 ? (myRank+1)+'°' : '-';
-  }
+let _hostLbInterval = null;
+function updateHostLeaderboard(ranked){
+  const el = document.getElementById('host-leaderboard');
+  if(!el) return;
+  const medals = ['🥇','🥈','🥉','4°','5°'];
+  el.innerHTML = ranked.slice(0,5).map((p,i)=>`
+    <div class="hlb-row${p.finished?' hlb-done':''}">
+      <span class="hlb-pos">${medals[i]||i+1}</span>
+      <div class="hlb-dot" style="background:${p.color}"></div>
+      <span class="hlb-name">${p.name}</span>
+      <div class="hlb-bar-wrap"><div class="hlb-bar" style="width:${Math.min(100,p.laps/3*100)}%"></div></div>
+      <span class="hlb-laps">${p.laps}/3 ${p.finished?'✓':''}</span>
+    </div>`).join('');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1370,13 +1420,20 @@ function updateCar(dt=1){
     lapCrossed=true; carMidPassed=false; car.laps++; car.score+=50;
     if(car.laps>=3 && !myFinished){
       myFinished=true;
-      const p = players[myId] || {name: myName, color: myColor};
-      finishers.push({ id: myId, name: p.name, color: p.color, laps: 3 });
-      const knownIds2 = new Set([...Object.keys(players), ...finishers.map(f=>f.id)]);
-      const neededToEnd2 = Math.min(3, knownIds2.size);
-      if(finishers.length >= neededToEnd2){
-        if(isHost) broadcastToClients({ type:'podium', finishers });
-        if(!podiumShown) showPodium();
+      // Avisar al host inmediatamente con f:1 (bypass throttle)
+      stateThrottle = 0; _lastSentState = null;
+      sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
+        a:Math.round(car.angle*100)/100, l:3, f:1 });
+      // Reenviar 3 veces para garantizar entrega
+      setTimeout(()=>sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
+        a:Math.round(car.angle*100)/100, l:3, f:1 }), 200);
+      setTimeout(()=>sendToHost({ t:'s', x:Math.round(car.x*10)/10, y:Math.round(car.y*10)/10,
+        a:Math.round(car.angle*100)/100, l:3, f:1 }), 500);
+      // Si soy host-jugador (no aplica en v35 pero por si acaso)
+      if(isHost){
+        const p = players[myId] || {name:myName, color:myColor};
+        finishers.push({ id:myId, name:p.name, color:p.color, laps:3 });
+        checkEndCondition();
       }
     }
   }
