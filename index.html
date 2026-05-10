@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Trivia Racer v34 — Multijugador</title>
+<title>Trivia Racer v35 — Multijugador</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: #0a0a14; display: flex; justify-content: center; align-items: flex-start; height: 100%; min-height: 100dvh; font-family: 'Courier New', monospace; overflow: hidden; width: 100%; }
@@ -206,16 +206,15 @@ canvas { display: block; width: 820px; height: 430px; }
 #overlay p { color: #aaa; font-size: 11px; text-align: center; max-width: 280px; line-height: 1.6; }
 .btn { background: #e94560; color: #fff; border: none; padding: 10px 26px; font-size: 13px; font-weight: bold; border-radius: 6px; cursor: pointer; letter-spacing: 1px; font-family: 'Courier New', monospace; }
 .btn:hover { background: #c73450; }
-#trivia-panel { position: absolute; inset: 0; background: rgba(10,10,20,0.98); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 30; padding: 24px 20px; }
-#trivia-panel h3 { color: #f5a623; font-size: clamp(13px, 3.5vw, 16px); letter-spacing: 2px; text-align: center; }
-#trivia-question { color: #fff; font-size: clamp(16px, 4.5vw, 22px); text-align: center; width: 100%; max-width: 600px; line-height: 1.6; }
-.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 620px; }
-.opt-btn { background: #1a1a2e; border: 2px solid #444; color: #ddd; padding: clamp(14px,4vw,22px) 10px; font-size: clamp(14px, 3.8vw, 18px); border-radius: 10px; cursor: pointer; text-align: center; font-family: 'Courier New', monospace; line-height: 1.4; }
+#trivia-panel { position: absolute; inset: 0; background: rgba(10,10,20,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 30; padding: 20px; }
+#trivia-panel h3 { color: #f5a623; font-size: 12px; letter-spacing: 2px; }
+#trivia-question { color: #fff; font-size: 14px; text-align: center; max-width: 310px; line-height: 1.5; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; max-width: 330px; }
+.opt-btn { background: #1a1a2e; border: 1.5px solid #444; color: #ddd; padding: 10px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; text-align: center; font-family: 'Courier New', monospace; }
 .opt-btn:hover { border-color: #e94560; color: #fff; }
-.opt-btn:active { border-color: #e94560; background: #e9456015; }
 .opt-btn.correct { border-color: #00c896; color: #00c896; background: #00c89620; }
 .opt-btn.wrong { border-color: #e94560; color: #e94560; background: #e9456020; }
-#trivia-result { font-size: clamp(14px, 4vw, 18px); text-align: center; min-height: 24px; font-weight: bold; max-width: 580px; line-height: 1.4; }
+#trivia-result { font-size: 13px; text-align: center; min-height: 20px; font-weight: bold; }
 #status-bar { background: #0f0f1a; padding: 2px 14px; min-height: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 #status-msg { color: #f5a623; font-size: 11px; }
 #pits-panel { position: absolute; inset: 0; background: rgba(8,8,18,0.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 35; }
@@ -1398,13 +1397,13 @@ function updateCar(dt=1){
       let dx=car.x-o.x,dy=car.y-o.y;
       let dist=Math.sqrt(dx*dx+dy*dy);
       // Solo reaparece si el carro ya está lejos (radio de seguridad = 2x el radio)
-      if(dist < (o.r+9)*2) o.cooldown=Math.max(o.cooldown, now+500);
+      if(dist < (o.r+9)*3) o.cooldown=Math.max(o.cooldown, now+1000);
       return;
     }
     let dx=car.x-o.x,dy=car.y-o.y;
     if(Math.sqrt(dx*dx+dy*dy)<o.r+9){
       // Cooldown largo — el charco no reaparece hasta que el carro se aleje
-      o.cooldown=now+8000;
+      o.cooldown=now+20000;
       car.stunEnd=now+1200;
       car.spinVel=(Math.random()>0.5?1:-1)*0.18;
       car.speed=1.5;
